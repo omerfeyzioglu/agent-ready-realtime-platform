@@ -1,0 +1,16 @@
+# Terraform state
+terraform.tfstate*
+.terraform/
+*.tfvars
+*.tfplan
+crash.log
+
+# Terraform binary 
+bin/
+
+# Python virtual environment
+.venv/
+
+.DS_Store
+__pycache__/
+*.pyc
