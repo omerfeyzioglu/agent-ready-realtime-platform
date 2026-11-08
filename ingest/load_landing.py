@@ -367,7 +367,7 @@ def main() -> int:
     a = p.parse_args()
 
     if a.start < "2022-01":
-        raise SystemExit("2022'den önceki veri kullanılmaz (AGENTS.md)")
+        raise SystemExit("data before 2022 is out of scope")
     groups = set(a.only.split(","))
     unknown = groups - set(GROUPS)
     if unknown:
