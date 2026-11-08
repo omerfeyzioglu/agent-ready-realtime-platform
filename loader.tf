@@ -49,6 +49,23 @@ data "aws_iam_policy_document" "loader_bucket" {
       "${aws_s3_bucket.raw.arn}/landing/*",
       "${aws_s3_bucket.raw.arn}/ops/*",
       "${aws_s3_bucket.raw.arn}/source/*",
+      "${aws_s3_bucket.raw.arn}/lake/raw/*",
+    ]
+  }
+
+  statement {
+    sid = "GlueRawTables"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:CreateTable",
+      "glue:UpdateTable",
+    ]
+    resources = [
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.current.account_id}:catalog",
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.raw.name}",
+      "arn:aws:glue:${var.region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.raw.name}/*",
     ]
   }
 }

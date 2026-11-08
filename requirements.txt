@@ -1,2 +1,3 @@
 duckdb>=1.4,<2
 pandas>=2.2,<3
+pyiceberg[glue,pyarrow]==0.11.1
