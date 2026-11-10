@@ -1,0 +1,73 @@
+version: 2
+
+models:
+  - name: stg_trip_events
+    description: >
+      FHVHV events with the payload parsed into typed columns, duplicates by
+      event_id removed. Partitioned by event_month.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: trip_id
+        data_tests: [not_null]
+      - name: event_time
+        data_tests: [not_null]
+      - name: event_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [requested, arrived, picked_up, dropped_off, tip_added]
+      - name: provider
+        description: uber or lyft (requested events only)
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [uber, lyft]
+      - name: is_payload_invalid
+        description: Payload is not valid JSON. Expected to stay false; the stream sends malformed events to a DLQ.
+
+  - name: stg_trips
+    description: >
+      One row per FHVHV trip assembled from its events, with durations and
+      quality flags. Partitioned by trip_month (month of the request).
+    columns:
+      - name: trip_id
+        data_tests: [unique, not_null]
+      # In dev the input is a few days, so trips cut by the window edge lack
+      # their request: warn there, fail on full months.
+      - name: provider
+        data_tests:
+          - not_null:
+              config:
+                severity: "{{ 'warn' if target.name == 'dev' else 'error' }}"
+          - accepted_values:
+              arguments:
+                values: [uber, lyft]
+      - name: requested_at
+        data_tests:
+          - not_null:
+              config:
+                severity: "{{ 'warn' if target.name == 'dev' else 'error' }}"
+      - name: is_incomplete
+        description: A requested, picked_up or dropped_off event is missing.
+      - name: is_out_of_order
+        description: Source clocks break request <= arrival <= pickup <= dropoff.
+      - name: is_dst_assumed
+        description: A fall-back-hour time could not be proven from the trip itself.
+      - name: is_content_duplicate
+        description: Same provider, base, times and zones as an earlier trip.
+
+  - name: stg_yellow_trips
+    description: Yellow taxi trips, normalized names and types, UTC times, quality flags. Partitioned by file_month.
+    columns:
+      - name: trip_id
+        data_tests: [unique, not_null]
+      - name: pickup_at
+        data_tests: [not_null]
+
+  - name: stg_zones
+    description: TLC taxi zones (265 rows).
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]

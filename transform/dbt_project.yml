@@ -1,0 +1,23 @@
+name: nyc_platform
+version: "0.1.0"
+config-version: 2
+profile: nyc_platform
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Set by run_staging.py for every invocation.
+  month: null              # partition being built, YYYY-MM
+  raw_metadata: null       # current Iceberg metadata file of raw.trip_events (from Glue)
+  event_months: []         # staged event partitions stg_trips may read (month-1..month+1)
+  slice_from: null         # optional event_time window for quick local runs
+  slice_to: null
+
+models:
+  nyc_platform:
+    staging:
+      +materialized: parquet_partition

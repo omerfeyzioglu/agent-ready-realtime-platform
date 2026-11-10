@@ -1,0 +1,32 @@
+# No secrets here: S3 access uses the standard AWS credential chain
+# (local profile on a laptop, instance role on EC2).
+nyc_platform:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ":memory:"
+      threads: 4
+      extensions: [httpfs, iceberg, icu, json]
+      secrets:
+        - type: s3
+          provider: credential_chain
+          region: us-east-1
+      settings:
+        TimeZone: UTC
+        preserve_insertion_order: false
+        memory_limit: "{{ env_var('DUCKDB_MEMORY_LIMIT', '8GB') }}"
+    prod:
+      type: duckdb
+      path: ":memory:"
+      threads: 4
+      extensions: [httpfs, iceberg, icu, json]
+      secrets:
+        - type: s3
+          provider: credential_chain
+          region: us-east-1
+      settings:
+        TimeZone: UTC
+        preserve_insertion_order: false
+        threads: "{{ env_var('DUCKDB_THREADS', '4') }}"
+        memory_limit: "{{ env_var('DUCKDB_MEMORY_LIMIT', '20GB') }}"

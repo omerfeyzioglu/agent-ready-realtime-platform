@@ -50,6 +50,7 @@ data "aws_iam_policy_document" "loader_bucket" {
       "${aws_s3_bucket.raw.arn}/ops/*",
       "${aws_s3_bucket.raw.arn}/source/*",
       "${aws_s3_bucket.raw.arn}/lake/raw/*",
+      "${aws_s3_bucket.raw.arn}/lake/staging/*",
     ]
   }
 

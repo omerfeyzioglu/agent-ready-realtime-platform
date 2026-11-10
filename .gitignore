@@ -14,3 +14,11 @@ bin/
 .DS_Store
 __pycache__/
 *.pyc
+
+# dbt and local staging output
+transform/target/
+transform/logs/
+transform/dbt_packages/
+.lake/
+.tmp/
+transform/.user.yml

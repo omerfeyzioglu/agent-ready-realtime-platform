@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Append-only Iceberg tables in the AWS Glue catalog.
+    tables:
+      - name: trip_events
+        description: >
+          FHVHV trip events (requested, arrived, picked_up, dropped_off,
+          tip_added) as received: envelope columns plus a JSON payload.
+        config:
+          meta:
+            # Glue holds a pointer to the current metadata file; the runner
+            # resolves it before each run so every model reads one snapshot.
+            external_location: "iceberg_scan('{{ var(\"raw_metadata\") }}')"
+
+  - name: source_files
+    description: Simulated app database (TLC trip files plus trip_id) and TLC reference files.
+    tables:
+      - name: yellow_trips
+        config:
+          meta:
+            external_location: "read_parquet('s3://nyc-taxi-raw-969788248726/source/tlc/yellow/year={{ (var(\"month\") or \"0000-00\")[:4] }}/month={{ (var(\"month\") or \"0000-00\")[5:] }}/*.parquet', hive_partitioning = false)"
+      - name: taxi_zone_lookup
+        config:
+          meta:
+            external_location: "read_csv('s3://nyc-taxi-raw-969788248726/landing/tlc/reference/taxi_zone_lookup.csv', header = true)"
