@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Kaynak dosyaları indirip s3://<bucket>/landing/ altına olduğu gibi yükler.
+"""Downloads the source files and uploads them unchanged to s3://<bucket>/landing/.
 
-- TLC linkleri her çalışmada TLC sayfasından okunur, URL tahmin edilmez.
-- landing/ değiştirilmez: hedef anahtar zaten varsa dosya atlanır, üzerine yazılmaz.
-- Her nesnenin sha256 ve kaynak URL'si S3 metadata'sında tutulur; manifest
-  (ops/manifest/) her çalışmanın sonunda bu metadata'dan yeniden üretilir.
+- TLC links are read from the TLC page on every run; URLs are never guessed.
+- landing/ is never modified: if the target key exists, the file is skipped.
+- Each object's sha256 and source URL are kept in its S3 metadata; the manifest
+  (ops/manifest/) is rebuilt from that metadata at the end of every run.
 
-Yalnızca stdlib ve AWS CLI kullanır (Amazon Linux 2023'te ikisi de kurulu).
+Uses only the standard library and the AWS CLI (both present on Amazon Linux 2023).
 
-Örnek:
+Example:
     python3 load_landing.py --bucket B --only tlc-trips --start 2024-01 --end 2024-01
 """
 from __future__ import annotations
@@ -38,13 +38,13 @@ TLC_REFERENCE = (
     "data_dictionary_trip_records_yellow.pdf",
 )
 
-# Central Park (NOAA KNYC istasyonu)
+# Central Park (NOAA station KNYC)
 WEATHER_LAT, WEATHER_LON = 40.7789, -73.9692
 WEATHER_HOURLY = (
     "temperature_2m,relative_humidity_2m,precipitation,rain,snowfall,snow_depth,"
     "weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m"
 )
-# Open-Meteo arşivi birkaç gün geriden gelir; bu kadar gün öncesine kadar iste.
+# The Open-Meteo archive lags a few days; request up to this many days ago.
 WEATHER_LAG_DAYS = 7
 
 HOLIDAY_YEARS = range(2023, 2027)
@@ -62,7 +62,7 @@ def log(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hedefler: (s3 key, kaynak URL, içerik üretici) üçlüleri
+# Targets: (s3 key, source URL, optional content) triples
 # ---------------------------------------------------------------------------
 
 
@@ -70,8 +70,8 @@ class Target:
     def __init__(self, key: str, source_url: str, content: bytes | None = None, verify=None):
         self.key = key
         self.source_url = source_url
-        self.content = content  # None ise source_url'den indirilir
-        self.verify = verify  # verify(path) -> ek metadata; sorun varsa hata fırlatır
+        self.content = content  # None: download from source_url
+        self.verify = verify  # verify(path) -> extra metadata; raises on a problem
 
 
 def fetch_text(url: str) -> str:
@@ -117,7 +117,7 @@ def tlc_reference_targets(links: list[str]) -> list[Target]:
     for name in TLC_REFERENCE:
         matches = [u for u in links if u.rsplit("/", 1)[-1] == name]
         if not matches:
-            raise SystemExit(f"TLC sayfasında {name} linki bulunamadı")
+            raise SystemExit(f"no link for {name} on the TLC page")
         targets.append(Target(f"landing/tlc/reference/{name}", matches[0]))
     return targets
 
@@ -131,8 +131,8 @@ def weather_targets(start: str, today: dt.date) -> list[Target]:
         next_first = dt.date(y + (m == 12), m % 12 + 1, 1)
         end = min(next_first - dt.timedelta(days=1), last_day)
         complete = end == next_first - dt.timedelta(days=1)
-        # Ay tamamlanmadıysa dosya adı bitiş tarihini taşır; sonraki çalışmalar
-        # yeni bir anlık görüntü ekler, eskisinin üzerine yazmaz.
+        # An unfinished month carries its end date in the file name; later runs
+        # add a new snapshot instead of overwriting the old one.
         name = f"hourly_{ym}.json" if complete else f"hourly_{first}_{end}.json"
         query = urllib.parse.urlencode({
             "latitude": WEATHER_LAT,
@@ -160,15 +160,15 @@ def _last_weekday(year: int, month: int, weekday: int) -> dt.date:
 
 
 def _observed(d: dt.date) -> dt.date:
-    if d.weekday() == 5:  # cumartesi -> cuma
+    if d.weekday() == 5:  # Saturday -> Friday
         return d - dt.timedelta(days=1)
-    if d.weekday() == 6:  # pazar -> pazartesi
+    if d.weekday() == 6:  # Sunday -> Monday
         return d + dt.timedelta(days=1)
     return d
 
 
 def holiday_target() -> Target:
-    """5 U.S.C. 6103'teki 11 federal tatil; tarihler kurallardan hesaplanır."""
+    """The 11 federal holidays in 5 U.S.C. 6103; dates are computed from the rules."""
     mon, thu = 0, 3
     rows = []
     for y in HOLIDAY_YEARS:
@@ -199,7 +199,7 @@ def holiday_target() -> Target:
 
 
 def events_target(start: str, today: dt.date) -> Target:
-    """Veri seti değişebilen bir tablo: indirme günü snapshot= klasörüne yazılır."""
+    """The dataset is a changing table: each download goes to a snapshot=<date> folder."""
     where = f"start_date_time >= '{start}-01T00:00:00'"
     query = urllib.parse.urlencode({"$where": where, "$order": ":id", "$limit": 50_000_000})
     url = f"{EVENTS_API}.csv?{query}"
@@ -209,9 +209,9 @@ def events_target(start: str, today: dt.date) -> Target:
         expected = int(json.loads(fetch_text(count_url))[0]["count"])
         csv.field_size_limit(sys.maxsize)
         with open(path, newline="", encoding="utf-8") as f:
-            rows = sum(1 for _ in csv.reader(f)) - 1  # başlık satırı
+            rows = sum(1 for _ in csv.reader(f)) - 1  # header row
         if rows != expected:
-            raise IOError(f"satır sayısı {rows}, API {expected} diyor")
+            raise IOError(f"row count {rows}, API says {expected}")
         return {"row-count": str(rows)}
 
     key = (f"landing/events/nyc_permitted_events_historical/snapshot={today.isoformat()}/"
@@ -220,7 +220,7 @@ def events_target(start: str, today: dt.date) -> Target:
 
 
 # ---------------------------------------------------------------------------
-# S3 (AWS CLI üzerinden)
+# S3 (through the AWS CLI)
 # ---------------------------------------------------------------------------
 
 
@@ -249,7 +249,7 @@ def s3_put(bucket: str, key: str, path: str, metadata: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# İndir + yükle
+# Download + upload
 # ---------------------------------------------------------------------------
 
 
@@ -266,12 +266,12 @@ def download(url: str, dest: str, attempts: int = 3) -> tuple[int, str]:
                     h.update(chunk)
                     size += len(chunk)
             if expected is not None and int(expected) != size:
-                raise IOError(f"eksik indirme: {size}/{expected} bayt")
+                raise IOError(f"incomplete download: {size}/{expected} bytes")
             return size, h.hexdigest()
-        except Exception as e:  # noqa: BLE001 - ağ hatalarında tekrar dene
+        except Exception as e:  # noqa: BLE001 - retry on network errors
             if i == attempts:
                 raise
-            log(f"  tekrar ({i}/{attempts}) {url}: {e}")
+            log(f"  retry ({i}/{attempts}) {url}: {e}")
             time.sleep(5 * i)
     raise AssertionError("unreachable")
 
@@ -300,11 +300,11 @@ def process(bucket: str, t: Target, tmpdir: str, dry_run: bool) -> dict:
             **extra,
         })
     finally:
-        # Hata olsa da geçici dosyayı sil; yoksa disk dolar ve diğer işler de düşer.
+        # Delete the temp file even on error, or the disk fills and other jobs fail.
         if os.path.exists(path):
             os.remove(path)
     secs = time.time() - started
-    log(f"  yüklendi {t.key} ({size / 1e6:.1f} MB, {secs:.0f} sn)")
+    log(f"  uploaded {t.key} ({size / 1e6:.1f} MB, {secs:.0f} s)")
     return {"key": t.key, "action": "uploaded", "size": size, "sha256": sha,
             "source_url": t.source_url, "seconds": round(secs, 1)}
 
@@ -356,14 +356,14 @@ def write_manifest(bucket: str, run: list[dict], run_id: str) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bucket", required=True)
-    p.add_argument("--only", default=",".join(GROUPS), help=f"virgülle: {','.join(GROUPS)}")
+    p.add_argument("--only", default=",".join(GROUPS), help=f"comma-separated: {','.join(GROUPS)}")
     p.add_argument("--datasets", default=",".join(TLC_DATASETS))
     p.add_argument("--start", default="2024-01", help="YYYY-MM")
-    p.add_argument("--end", default=None, help="YYYY-MM (varsayılan: sayfadaki en son ay)")
+    p.add_argument("--end", default=None, help="YYYY-MM (default: latest month on the page)")
     p.add_argument("--workers", type=int, default=4)
-    # AL2023'te /tmp RAM üzerindeki tmpfs (c7i.large'da 1.9 GB); büyük dosyalar diske yazılsın.
+    # On AL2023 /tmp is a RAM tmpfs (1.9 GB on c7i.large); stage big files on disk.
     p.add_argument("--tmpdir", default="/var/tmp" if os.path.isdir("/var/tmp") else None)
-    p.add_argument("--dry-run", action="store_true", help="indirme/yükleme yapma, sadece listele")
+    p.add_argument("--dry-run", action="store_true", help="list only, no download or upload")
     a = p.parse_args()
 
     if a.start < "2022-01":
@@ -371,7 +371,7 @@ def main() -> int:
     groups = set(a.only.split(","))
     unknown = groups - set(GROUPS)
     if unknown:
-        raise SystemExit(f"bilinmeyen grup: {', '.join(sorted(unknown))}")
+        raise SystemExit(f"unknown group: {', '.join(sorted(unknown))}")
 
     targets: list[Target] = []
     if groups & {"tlc-trips", "tlc-reference"}:
@@ -387,7 +387,7 @@ def main() -> int:
     if "events" in groups:
         targets.append(events_target(a.start, dt.date.today()))
 
-    log(f"{len(targets)} hedef, bucket={a.bucket}, dry_run={a.dry_run}")
+    log(f"{len(targets)} targets, bucket={a.bucket}, dry_run={a.dry_run}")
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results, failures = [], []
     with tempfile.TemporaryDirectory(dir=a.tmpdir) as tmpdir, \
@@ -400,17 +400,17 @@ def main() -> int:
                 results.append(res)
                 if res["action"] != "uploaded":
                     log(f"  {res['action']} {t.key}")
-            except Exception as e:  # noqa: BLE001 - bir dosyanın hatası diğerlerini durdurmasın
+            except Exception as e:  # noqa: BLE001 - one failed file must not stop the others
                 failures.append({"key": t.key, "action": "failed", "error": str(e)})
-                log(f"  HATA {t.key}: {e}")
+                log(f"  ERROR {t.key}: {e}")
 
     counts = {k: sum(r["action"] == k for r in results) for k in ("uploaded", "skipped", "would_upload")}
     uploaded_mb = sum(r.get("size", 0) for r in results if r["action"] == "uploaded") / 1e6
-    log(f"bitti: {counts}, hata={len(failures)}, yüklenen={uploaded_mb:.1f} MB")
+    log(f"done: {counts}, failed={len(failures)}, uploaded={uploaded_mb:.1f} MB")
 
     if not a.dry_run:
         n = write_manifest(a.bucket, sorted(results + failures, key=lambda r: r["key"]), run_id)
-        log(f"manifest yazıldı: {n} nesne -> s3://{a.bucket}/ops/manifest/")
+        log(f"manifest written: {n} objects -> s3://{a.bucket}/ops/manifest/")
     return 1 if failures else 0
 
 

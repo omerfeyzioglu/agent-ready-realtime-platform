@@ -10,53 +10,53 @@ terraform {
 }
 
 # ---------------------------------------------------------------------------
-# Değişkenler
+# Variables
 # ---------------------------------------------------------------------------
 
 variable "project" {
-  description = "Kaynak adlarında ve etiketlerde kullanılan proje adı."
+  description = "Project name used in resource names and tags."
   type        = string
   default     = "nyc-taxi"
 }
 
 variable "region" {
-  description = "AWS bölgesi. NYC TLC açık veri seti de us-east-1'de, transfer ücretsiz."
+  description = "AWS region. The NYC TLC open data is in us-east-1 too, so transfer is free."
   type        = string
   default     = "us-east-1"
 }
 
 variable "enable_compute" {
-  description = "EC2 sunucusunu ve ona bağlı IAM/SG/alarm kaynaklarını oluştur. Kapalıyken yalnızca S3 kurulur."
+  description = "Create the EC2 instance and its IAM/SG/alarm resources. When off, only S3 is created."
   type        = bool
   default     = false
 }
 
 variable "instance_type" {
-  description = "Tüm container'ları çalıştıracak sunucunun tipi."
+  description = "Instance type of the server that runs all containers."
   type        = string
   default     = "m7i.xlarge"
 }
 
 variable "root_volume_gb" {
-  description = "Kök disk boyutu (GB)."
+  description = "Root volume size (GB)."
   type        = number
   default     = 100
 }
 
 variable "idle_cpu_threshold" {
-  description = "Ortalama CPU bu yüzdenin altında kalırsa sunucu boşta sayılır."
+  description = "The instance counts as idle while average CPU stays below this percentage."
   type        = number
   default     = 5
 }
 
 variable "idle_minutes" {
-  description = "Sunucu bu kadar dakika boşta kalınca durdurulur (5'in katı olmalı)."
+  description = "Stop the instance after this many idle minutes (must be a multiple of 5)."
   type        = number
   default     = 60
 
   validation {
     condition     = var.idle_minutes >= 5 && var.idle_minutes % 5 == 0
-    error_message = "idle_minutes 5'in katı olmalı (CloudWatch temel izleme 5 dakikalık)."
+    error_message = "idle_minutes must be a multiple of 5 (CloudWatch basic monitoring uses 5-minute periods)."
   }
 }
 
@@ -82,11 +82,11 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# S3: ham veri deposu (public erişim tamamen kapalı)
+# S3: raw data bucket (all public access blocked)
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "raw" {
-  # Bucket adları dünya genelinde tekil olmalı; hesap ID'si çakışmayı önler.
+  # Bucket names are globally unique; the account ID avoids collisions.
   bucket = "${var.project}-raw-${data.aws_caller_identity.current.account_id}"
 }
 
@@ -144,12 +144,12 @@ resource "aws_s3_bucket_policy" "raw" {
   bucket = aws_s3_bucket.raw.id
   policy = data.aws_iam_policy_document.raw_tls_only.json
 
-  # Public access block önce uygulanmalı, yoksa politika "public" sayılıp reddedilebilir.
+  # Apply the public access block first, or the policy may be rejected as "public".
   depends_on = [aws_s3_bucket_public_access_block.raw]
 }
 
 # ---------------------------------------------------------------------------
-# IAM: EC2 rolü (yalnızca bu bucket + SSM)
+# IAM: EC2 role (this bucket + SSM only)
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "ec2_assume" {
@@ -212,14 +212,14 @@ resource "aws_iam_instance_profile" "ec2" {
 }
 
 # ---------------------------------------------------------------------------
-# Ağ: varsayılan VPC, gelen trafiğe tamamen kapalı security group
+# Network: default VPC, security group with no inbound access
 # ---------------------------------------------------------------------------
 
 data "aws_vpc" "default" {
   default = true
 }
 
-# Her AZ her instance tipini desteklemiyor (ör. us-east-1e); destekleyenleri bul.
+# Not every AZ offers every instance type (e.g. us-east-1e); keep the ones that do.
 data "aws_ec2_instance_type_offerings" "supported" {
   location_type = "availability-zone"
 
@@ -250,11 +250,11 @@ resource "aws_security_group" "ec2" {
   count = local.compute_count
 
   name        = "${var.project}-ec2"
-  description = "Gelen port yok; erisim SSM ile. Giden trafik acik (SSM, Docker, veri indirme)."
+  description = "No inbound ports; access via SSM. Outbound open (SSM, Docker, downloads)."
   vpc_id      = data.aws_vpc.default.id
 
   egress {
-    description = "Tum giden trafik"
+    description = "All outbound traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -263,7 +263,7 @@ resource "aws_security_group" "ec2" {
 }
 
 # ---------------------------------------------------------------------------
-# EC2: tek sunucu, Amazon Linux 2023, açılışta Docker
+# EC2: single instance, Amazon Linux 2023, Docker at boot
 # ---------------------------------------------------------------------------
 
 data "aws_ami" "al2023" {
@@ -284,11 +284,11 @@ resource "aws_instance" "main" {
   subnet_id                   = sort(data.aws_subnets.default.ids)[0]
   vpc_security_group_ids      = [aws_security_group.ec2[0].id]
   iam_instance_profile        = aws_iam_instance_profile.ec2[0].name
-  associate_public_ip_address = true # NAT/VPC endpoint olmadan SSM'e ulaşmak için
+  associate_public_ip_address = true # reach SSM without a NAT gateway or VPC endpoints
 
   metadata_options {
-    http_tokens                 = "required" # yalnızca IMDSv2
-    http_put_response_hop_limit = 2          # container'lar da rol kimlik bilgilerini alabilsin
+    http_tokens                 = "required" # IMDSv2 only
+    http_put_response_hop_limit = 2          # let containers reach the role credentials too
   }
 
   root_block_device {
@@ -316,20 +316,20 @@ resource "aws_instance" "main" {
   }
 
   lifecycle {
-    # Yeni AMI çıktığında sunucu baştan kurulmasın.
+    # Don't rebuild the instance when a new AMI is released.
     ignore_changes = [ami]
   }
 }
 
 # ---------------------------------------------------------------------------
-# Otomatik kapanma: CPU uzun süre düşükse sunucuyu durdur
+# Idle stop: stop the instance when CPU stays low
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "idle_stop" {
   count = local.compute_count
 
   alarm_name        = "${var.project}-idle-stop"
-  alarm_description = "CPU ${var.idle_minutes} dakika boyunca %${var.idle_cpu_threshold} altında kalırsa EC2'yi durdurur."
+  alarm_description = "Stops the EC2 instance when CPU stays below ${var.idle_cpu_threshold}% for ${var.idle_minutes} minutes."
 
   namespace   = "AWS/EC2"
   metric_name = "CPUUtilization"
@@ -342,13 +342,13 @@ resource "aws_cloudwatch_metric_alarm" "idle_stop" {
   evaluation_periods  = var.idle_minutes / 5
   threshold           = var.idle_cpu_threshold
   comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "missing" # sunucu kapalıyken veri gelmez; durumu değiştirme
+  treat_missing_data  = "missing" # no data while stopped; keep the current state
 
   alarm_actions = ["arn:aws:automate:${var.region}:ec2:stop"]
 }
 
 # ---------------------------------------------------------------------------
-# Çıktılar
+# Outputs
 # ---------------------------------------------------------------------------
 
 output "bucket_name" {
@@ -360,6 +360,6 @@ output "instance_id" {
 }
 
 output "ssm_connect" {
-  description = "Sunucuya bağlanmak için (session-manager-plugin gerekir)."
+  description = "Connect to the instance (needs session-manager-plugin)."
   value       = var.enable_compute ? "aws ssm start-session --target ${aws_instance.main[0].id} --region ${var.region}" : null
 }

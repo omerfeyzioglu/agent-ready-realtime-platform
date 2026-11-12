@@ -1,23 +1,23 @@
 # ---------------------------------------------------------------------------
-# Geçici loader: kaynak dosyaları us-east-1 içinden indirip landing/'e yükler.
-# İş bitince enable_loader = false ile silinir. Gelen port yok; komutlar SSM
-# Run Command ile gönderilir (session-manager-plugin gerekmez).
+# Temporary loader: runs batch jobs (downloads, builds) inside us-east-1, next
+# to the data. Removed with enable_loader = false when the job is done. No
+# inbound ports; commands are sent with SSM Run Command (no session-manager-plugin).
 # ---------------------------------------------------------------------------
 
 variable "enable_loader" {
-  description = "Geçici loader EC2'sini ve ona bağlı kaynakları oluştur."
+  description = "Create the temporary loader EC2 instance and its resources."
   type        = bool
   default     = false
 }
 
 variable "loader_instance_type" {
-  description = "Loader sunucusunun tipi (ağ ağırlıklı iş, küçük yeter)."
+  description = "Loader instance type (small is enough for downloads; larger for heavy builds)."
   type        = string
   default     = "c7i.large"
 }
 
 variable "loader_max_hours" {
-  description = "Unutulursa loader bu kadar saat sonra kendini kapatıp silinir."
+  description = "If forgotten, the loader shuts down and terminates itself after this many hours."
   type        = number
   default     = 3
 }
@@ -104,11 +104,11 @@ resource "aws_security_group" "loader" {
   count = local.loader_count
 
   name        = "${var.project}-loader"
-  description = "Gelen port yok; erisim SSM ile. Giden trafik acik (indirme, S3, SSM)."
+  description = "No inbound ports; access via SSM. Outbound open (downloads, S3, SSM)."
   vpc_id      = data.aws_vpc.default.id
 
   egress {
-    description = "Tum giden trafik"
+    description = "All outbound traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -137,7 +137,7 @@ resource "aws_instance" "loader" {
     encrypted   = true
   }
 
-  # Emniyet: unutulursa kendini kapatır (shutdown davranışı "terminate").
+  # Safety net: shuts itself down if forgotten (shutdown behavior is "terminate").
   user_data = <<-EOF
     #!/bin/bash
     shutdown -h +${var.loader_max_hours * 60}
