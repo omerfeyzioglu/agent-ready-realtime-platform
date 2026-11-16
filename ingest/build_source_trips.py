@@ -22,7 +22,7 @@ import duckdb
 
 BUCKET = "s3://nyc-taxi-raw-969788248726"
 ID_TIME = {"fhvhv": "request_datetime", "yellow": "tpep_pickup_datetime"}
-MONTHS = [f"{y}-{m:02d}" for y in range(2023, 2027) for m in range(1, 13) if f"{y}-{m:02d}" <= "2026-08"]
+MONTHS = [f"{y}-{m:02d}" for y in range(2023, 2027) for m in range(1, 13) if f"{y}-{m:02d}" <= "2026-09"]
 
 
 def paths(dataset, month):

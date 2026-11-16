@@ -41,7 +41,7 @@ from pyiceberg.types import IntegerType, LongType, NestedField, StringType, Time
 BUCKET = "s3://nyc-taxi-raw-969788248726"
 TABLE = "raw.trip_events"
 TABLE_LOCATION = f"{BUCKET}/lake/raw/trip_events"
-BACKFILL_MONTHS = [f"{y}-{m:02d}" for y in range(2023, 2027) for m in range(1, 13) if f"{y}-{m:02d}" <= "2026-06"]
+BACKFILL_MONTHS = [f"{y}-{m:02d}" for y in range(2023, 2027) for m in range(1, 13) if f"{y}-{m:02d}" <= "2026-07"]
 FALL_BACK_DATES = ["2023-11-05", "2024-11-03", "2025-11-02", "2026-11-01"]
 BATCH_ROWS = 5_000_000
 
@@ -289,7 +289,7 @@ def main():
     months = BACKFILL_MONTHS if a.months == "all" else a.months.split(",")
     bad = [m for m in months if m not in BACKFILL_MONTHS]
     if bad:
-        raise SystemExit(f"not backfill months (live replay covers 2026-07 and later): {bad}")
+        raise SystemExit(f"not backfill months (live replay covers 2026-08 and later): {bad}")
 
     table = open_table()
     now = datetime.now(timezone.utc)
