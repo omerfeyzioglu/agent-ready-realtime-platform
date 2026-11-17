@@ -50,6 +50,15 @@ type replayClock struct {
 	speed     float64
 }
 
+// now is the current replay time. With speed 0 (no waiting) replay time
+// is undefined, so the start is returned.
+func (c *replayClock) now() int64 {
+	if c.speed <= 0 {
+		return c.start
+	}
+	return c.start + int64(float64(time.Since(c.wallStart).Microseconds())*c.speed)
+}
+
 // wait returns how long to sleep before an event at `at` may be sent.
 func (c *replayClock) wait(at int64) time.Duration {
 	if c.speed <= 0 {

@@ -1,0 +1,45 @@
+# One replay run of the producer. IMAGE_TAG is filled in at apply time:
+#   sed "s/IMAGE_TAG/<tag>/" k8s/producer/job.yaml | kubectl apply -f -
+# Args decide the range and speed; on start it continues after the newest
+# event already in trip-events.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: producer
+  namespace: kafka
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: producer
+    spec:
+      serviceAccountName: producer
+      restartPolicy: Never
+      containers:
+        - name: producer
+          image: 969788248726.dkr.ecr.us-east-1.amazonaws.com/nyc-taxi/producer:IMAGE_TAG
+          args:
+            - --months=2026-08
+            - --sink=kafka
+            - --speed=60
+            - --until=2026-08-01T05:00:00Z
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      volumes:
+        # Scratch disk on the node for the downloaded source file; removed
+        # with the pod.
+        - name: data
+          emptyDir:
+            sizeLimit: 5Gi
