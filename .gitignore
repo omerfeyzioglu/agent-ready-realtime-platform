@@ -22,3 +22,6 @@ transform/dbt_packages/
 .lake/
 .tmp/
 transform/.user.yml
+
+# Go producer binary
+producer/producer
