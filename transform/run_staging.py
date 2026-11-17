@@ -66,7 +66,8 @@ def yellow_months():
 
 def duckdb_con():
     con = duckdb.connect()
-    con.execute("LOAD httpfs; LOAD iceberg; LOAD icu;")
+    # INSTALL is a no-op when the extension is already there (fresh machines have none)
+    con.execute("INSTALL httpfs; INSTALL iceberg; INSTALL icu; LOAD httpfs; LOAD iceberg; LOAD icu;")
     con.execute(f"CREATE SECRET (TYPE s3, PROVIDER credential_chain, REGION '{REGION}');")
     con.execute("SET TimeZone = 'UTC'; SET enable_progress_bar = false;")
     return con
@@ -138,6 +139,20 @@ def main():
         plan += [("stg_trip_events", {"month": m}, loc("trip_events", "event_month", m)) for m in event_months]
     if "trips" in models:
         plan += [("stg_trips", {"month": m}, loc("trips", "trip_month", m)) for m in event_months]
+    if "holidays" in models:
+        plan.append(("stg_holidays", {}, f"{root}/holidays/data.parquet"))
+    if "zone_hour_baseline" in models:
+        froot = root.replace("/staging", "/features")
+        plan += [("feat_zone_hour_baseline", {"month": m}, f"{froot}/zone_hour_baseline/trip_month={m}/data.parquet")
+                 for m in event_months]
+    if "zone_hour_vs_baseline" in models:
+        froot = root.replace("/staging", "/features")
+        plan += [("feat_zone_hour_vs_baseline", {"month": m}, f"{froot}/zone_hour_vs_baseline/trip_month={m}/data.parquet")
+                 for m in event_months]
+    if "zone_hour" in models:
+        froot = root.replace("/staging", "/features")
+        plan += [("feat_zone_hour", {"month": m}, f"{froot}/zone_hour/trip_month={m}/data.parquet")
+                 for m in event_months]
     if "yellow" in models:
         plan += [("stg_yellow_trips", {"month": m}, loc("yellow_trips", "file_month", m)) for m in ymonths]
 
@@ -153,6 +168,25 @@ def main():
                 m = v["month"]
                 v = {**v, "event_months": [w for w in (month_add(m, -1), m, month_add(m, 1))
                                            if exists(loc("trip_events", "event_month", w))]}
+            if model == "feat_zone_hour":
+                # dropoffs of a month also come from trips requested the month before
+                m = v["month"]
+                v = {**v, "trip_months": [w for w in (month_add(m, -1), m)
+                                          if exists(loc("trips", "trip_month", w))]}
+            if model == "feat_zone_hour_baseline":
+                # 6 weeks back from the 1st of a month reaches two months earlier
+                m = v["month"]
+                froot = root.replace("/staging", "/features")
+                v = {**v, "feature_months": [w for w in (month_add(m, -2), month_add(m, -1), m)
+                     if exists(f"{froot}/zone_hour/trip_month={w}/data.parquet")]}
+            if model == "feat_zone_hour_vs_baseline":
+                # 8 weeks back from the 1st of a month reaches two months earlier;
+                # a month counts only when both the actual and the baseline exist
+                m = v["month"]
+                froot = root.replace("/staging", "/features")
+                v = {**v, "feature_months": [w for w in (month_add(m, -2), month_add(m, -1), m)
+                     if exists(f"{froot}/zone_hour/trip_month={w}/data.parquet")
+                     and exists(f"{froot}/zone_hour_baseline/trip_month={w}/data.parquet")]}
             r = build(model, args.target, {**base, **v}, location)
             results.append(r)
             if r["status"] != "ok":

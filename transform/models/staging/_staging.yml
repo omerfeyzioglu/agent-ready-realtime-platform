@@ -71,3 +71,16 @@ models:
     columns:
       - name: zone_id
         data_tests: [unique, not_null]
+
+  - name: stg_holidays
+    description: >
+      US federal holidays 2023-2026, one row per calendar date that counts as
+      a holiday: the holiday itself and, when it falls on a weekend, the
+      weekday it is observed on.
+    columns:
+      - name: holiday_date
+        data_tests: [unique, not_null]
+      - name: holiday_name
+        data_tests: [not_null]
+      - name: is_observed_only
+        description: The date is only the observed day off, not the holiday itself.

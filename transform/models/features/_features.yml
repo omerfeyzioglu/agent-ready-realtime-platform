@@ -1,0 +1,99 @@
+version: 2
+
+models:
+  - name: feat_zone_hour
+    description: >
+      Hourly metrics per zone and provider for FHVHV trips: demand, supply
+      proxy, wait time (request to driver arrival), speed and prices. One row
+      per zone, hour and provider; provider 'all' covers both. Pickup-side
+      columns use the pickup zone and request hour; dropoffs_in uses the
+      dropoff zone and dropoff hour. Partitioned by month.
+    columns:
+      - name: hour_utc
+        description: Start of the request hour (UTC).
+        data_tests: [not_null]
+      - name: hour_local
+        description: The same hour on the NYC wall clock.
+      - name: zone_id
+        data_tests: [not_null]
+      - name: provider
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [uber, lyft, all]
+      - name: requests
+        description: >
+          Trips requested in this zone and hour. Caveat: the source holds only
+          completed trips, so cancelled and unfulfilled requests are missing.
+          In a shortage this undercounts demand.
+        data_tests: [not_null]
+      - name: dropoffs_in
+        description: Trips that ended in this zone in this hour; drivers becoming free here. A supply proxy, not a driver count.
+        data_tests: [not_null]
+      - name: wait_p90_s
+        description: 90th percentile of request to arrival, seconds. The slow tail.
+      - name: fare_per_mile
+        description: Total base passenger fare / total miles (USD per mile). Rises with price pressure.
+      - name: driver_pay_per_mile
+        description: Total driver pay / total miles (USD per mile).
+      - name: wait_p50_s
+        description: Median seconds from request to driver arrival. NULL when no trip has an arrival time.
+      - name: avg_speed_mph
+        description: Total miles / total hours of trips between 1 and 80 mph.
+      - name: is_low_sample
+        description: Fewer than 30 trips with a wait time; do not rank or alert on this row.
+
+  - name: feat_zone_hour_baseline
+    description: >
+      The normal value for every row of feat_zone_hour: same zone, provider,
+      weekday and NYC hour over the previous weeks (window in
+      baseline_window_weeks), holidays left out. Built only from earlier
+      hours. Join to feat_zone_hour on hour_utc, zone_id, provider.
+    columns:
+      - name: hour_utc
+        data_tests: [not_null]
+      - name: zone_id
+        data_tests: [not_null]
+      - name: provider
+        data_tests: [not_null]
+      - name: baseline_weeks_n
+        description: Earlier weeks found for this weekday and hour (0 to the window size).
+      - name: baseline_wait_weeks_n
+        description: Of those, weeks with enough trips for a trustworthy wait median.
+      - name: baseline_wait_p50_s
+        description: Median of the weekly wait medians, seconds. The normal wait.
+      - name: baseline_wait_p25_s
+        description: Lower edge of the usual range of weekly wait medians.
+      - name: baseline_wait_p75_s
+        description: Upper edge of the usual range of weekly wait medians.
+      - name: is_holiday
+        description: This row's own date is a federal holiday; its baseline comes from ordinary days, so read the comparison with care.
+      - name: is_baseline_weak
+        description: Fewer than 3 usable weeks; do not judge this hour against the baseline.
+
+  - name: feat_zone_hour_vs_baseline
+    description: >
+      feat_zone_hour next to its baseline, with ratios and a score. This is
+      the table to read for "where is the wait unusual". Same grain as
+      feat_zone_hour.
+    columns:
+      - name: hour_utc
+        data_tests: [not_null]
+      - name: zone_id
+        data_tests: [not_null]
+      - name: provider
+        data_tests: [not_null]
+      - name: wait_ratio
+        description: Actual wait median / baseline wait median. NULL when either side is not trustworthy (low sample or weak baseline).
+      - name: wait_ratio_pctile
+        description: >
+          0-100. Share of this zone and provider's hours in the previous 8
+          weeks whose wait_ratio was lower. 99 = worse than 99% of the zone's
+          recent hours. NULL when fewer than 200 earlier hours are available.
+      - name: score_history_n
+        description: Earlier hours the score was ranked against.
+      - name: requests_ratio
+        description: Actual requests / baseline requests.
+      - name: fare_per_mile_ratio
+        description: Actual fare per mile / baseline fare per mile.

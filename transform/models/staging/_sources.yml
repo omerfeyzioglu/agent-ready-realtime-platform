@@ -25,3 +25,7 @@ sources:
         config:
           meta:
             external_location: "read_csv('s3://nyc-taxi-raw-969788248726/landing/tlc/reference/taxi_zone_lookup.csv', header = true)"
+      - name: us_federal_holidays
+        config:
+          meta:
+            external_location: "read_csv('s3://nyc-taxi-raw-969788248726/landing/reference/holidays/us_federal_holidays_2023_2026.csv', header = true)"

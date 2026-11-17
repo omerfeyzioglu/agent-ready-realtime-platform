@@ -14,10 +14,16 @@ vars:
   month: null              # partition being built, YYYY-MM
   raw_metadata: null       # current Iceberg metadata file of raw.trip_events (from Glue)
   event_months: []         # staged event partitions stg_trips may read (month-1..month+1)
+  trip_months: []          # staged trip partitions feat_zone_hour may read (month-1, month)
+  feature_months: []       # feat_zone_hour partitions the baseline may read (month-2..month)
+  score_weeks: 8           # history a zone's wait ratio is ranked against, in weeks
+  baseline_weeks: 6        # look-back window of the baseline, in weeks
   slice_from: null         # optional event_time window for quick local runs
   slice_to: null
 
 models:
   nyc_platform:
     staging:
+      +materialized: parquet_partition
+    features:
       +materialized: parquet_partition
