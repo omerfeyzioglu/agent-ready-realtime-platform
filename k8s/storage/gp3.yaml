@@ -1,0 +1,18 @@
+# Default disk type for the cluster. EKS creates a gp2 class without making
+# it the default, so a PersistentVolumeClaim with no class would wait forever.
+# gp3 is ~20% cheaper than gp2 and has a fixed 3000 IOPS baseline.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+# Create the volume only when a pod needs it, in that pod's zone.
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+# Deleting the claim deletes the EBS volume, so nothing is left behind billing.
+reclaimPolicy: Delete

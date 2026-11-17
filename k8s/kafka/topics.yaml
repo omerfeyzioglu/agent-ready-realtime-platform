@@ -1,0 +1,36 @@
+# Topics are declared here and created by Strimzi's topic operator.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: trip-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: events
+spec:
+  # Key = trip_id, so one trip's events stay in one partition, in order.
+  # 6 = up to 6 parallel readers per consumer group, divisible by 1, 2, 3, 6.
+  # Can be increased later, never decreased.
+  partitions: 6
+  replicas: 1
+  config:
+    # Kafka is a buffer, not the archive: raw.trip_events on S3 keeps
+    # everything. Keep 7 days, and at most 3 GB per partition (18 GB of 30).
+    retention.ms: 604800000
+    retention.bytes: 3221225472
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: trip-events-dlq
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: events
+spec:
+  # Malformed events land here with the reason; low volume, kept longer
+  # so the reliability agent can inspect them.
+  partitions: 1
+  replicas: 1
+  config:
+    retention.ms: 2592000000
+    cleanup.policy: delete
