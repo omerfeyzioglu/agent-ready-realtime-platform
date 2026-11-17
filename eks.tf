@@ -101,6 +101,20 @@ module "eks" {
   authentication_mode                      = "API"
   enable_cluster_creator_admin_permissions = true
 
+  # Let the account root user (web console login) see Kubernetes resources
+  # in the EKS console.
+  access_entries = {
+    console_root = {
+      principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  }
+
   # Cost: no customer KMS key (EKS already encrypts Kubernetes secrets with an
   # AWS-owned key) and no control-plane logs in CloudWatch (audit logs are
   # billed per GB ingested). Turn logs on when debugging the control plane.
