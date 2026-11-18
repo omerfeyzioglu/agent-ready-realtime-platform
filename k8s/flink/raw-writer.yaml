@@ -1,0 +1,54 @@
+# Raw writer: Kafka trip-events -> Iceberg raw.trip_events, run by the Flink
+# Kubernetes Operator in application mode (one JobManager + one TaskManager
+# for this job only). IMAGE_TAG is filled in at apply time:
+#   sed "s/IMAGE_TAG/<tag>/" k8s/flink/raw-writer.yaml | kubectl apply -f -
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: raw-writer
+  namespace: flink
+spec:
+  image: 969788248726.dkr.ecr.us-east-1.amazonaws.com/nyc-taxi/flink-jobs:IMAGE_TAG
+  flinkVersion: v2_1
+  serviceAccount: flink
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "1"
+    # Every 5 minutes: checkpoint state, commit an Iceberg snapshot and the
+    # Kafka offsets together.
+    execution.checkpointing.interval: 5min
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.dir: s3://nyc-taxi-raw-969788248726/ops/flink/raw-writer/checkpoints
+    execution.checkpointing.savepoint-dir: s3://nyc-taxi-raw-969788248726/ops/flink/raw-writer/savepoints
+    state.backend.type: hashmap
+    # The JobManager keeps a pointer to the latest checkpoint in Kubernetes
+    # ConfigMaps and S3, so it can restart without losing its place.
+    high-availability.type: kubernetes
+    high-availability.storageDir: s3://nyc-taxi-raw-969788248726/ops/flink/raw-writer/ha
+    table.local-time-zone: UTC
+  podTemplate:
+    spec:
+      containers:
+        - name: flink-main-container
+          env:
+            - name: AWS_REGION
+              value: us-east-1
+            # Flink's own S3 filesystem (checkpoints, HA); Iceberg uses its
+            # own S3 client from the AWS bundle.
+            - name: ENABLE_BUILT_IN_PLUGINS
+              value: flink-s3-fs-hadoop-2.1.2.jar
+  jobManager:
+    resource:
+      memory: 1536m
+      cpu: 0.5
+  taskManager:
+    resource:
+      memory: 2048m
+      cpu: 1
+  job:
+    jarURI: local:///opt/flink/usrlib/sql-runner.jar
+    entryClass: SqlRunner
+    args: [/opt/flink/usrlib/sql/raw_writer.sql]
+    # Low volume: one reader is enough for all six partitions.
+    parallelism: 1
+    # On a spec change, restart from the latest checkpoint.
+    upgradeMode: last-state

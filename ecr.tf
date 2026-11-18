@@ -2,10 +2,15 @@
 # Container images and the producer's AWS access.
 # ---------------------------------------------------------------------------
 
-resource "aws_ecr_repository" "producer" {
-  count = var.enable_eks ? 1 : 0
+locals {
+  # One repository per image built in this project.
+  ecr_repositories = var.enable_eks ? toset(["producer", "flink-jobs"]) : toset([])
+}
 
-  name                 = "${var.project}/producer"
+resource "aws_ecr_repository" "this" {
+  for_each = local.ecr_repositories
+
+  name                 = "${var.project}/${each.key}"
   image_tag_mutability = "IMMUTABLE" # a tag always means the same image
   force_delete         = true        # terraform destroy removes stored images too
 
@@ -14,11 +19,11 @@ resource "aws_ecr_repository" "producer" {
   }
 }
 
-# Keep only the last 5 images; older ones are deleted (storage is billed).
-resource "aws_ecr_lifecycle_policy" "producer" {
-  count = var.enable_eks ? 1 : 0
+# Keep only the last 5 images per repository; older ones are deleted.
+resource "aws_ecr_lifecycle_policy" "this" {
+  for_each = local.ecr_repositories
 
-  repository = aws_ecr_repository.producer[0].name
+  repository = aws_ecr_repository.this[each.key].name
   policy = jsonencode({
     rules = [{
       rulePriority = 1
@@ -31,6 +36,19 @@ resource "aws_ecr_lifecycle_policy" "producer" {
       action = { type = "expire" }
     }]
   })
+}
+
+# The producer repository existed before the for_each; these blocks tell
+# Terraform it is the same resource under a new address, so it is renamed
+# in the state instead of destroyed (with its images) and created again.
+moved {
+  from = aws_ecr_repository.producer[0]
+  to   = aws_ecr_repository.this["producer"]
+}
+
+moved {
+  from = aws_ecr_lifecycle_policy.producer[0]
+  to   = aws_ecr_lifecycle_policy.this["producer"]
 }
 
 # The producer reads the frozen source files and nothing else.
@@ -79,6 +97,6 @@ resource "aws_eks_pod_identity_association" "producer" {
   role_arn        = aws_iam_role.producer[0].arn
 }
 
-output "producer_image_repo" {
-  value = one(aws_ecr_repository.producer[*].repository_url)
+output "image_repos" {
+  value = { for k, r in aws_ecr_repository.this : k => r.repository_url }
 }

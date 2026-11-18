@@ -1,0 +1,12 @@
+# Helm values for the Flink Kubernetes Operator 1.16.1
+# (repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.16.1/).
+
+# Flink jobs run in the flink namespace only.
+watchNamespaces: [flink]
+
+# The admission webhook checks FlinkDeployment specs before Kubernetes
+# accepts them, but its TLS certificate comes from cert-manager, which this
+# cluster does not run. Without it, a bad spec is accepted and the error
+# shows up in the resource's status instead.
+webhook:
+  create: false
