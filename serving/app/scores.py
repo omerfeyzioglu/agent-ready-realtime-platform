@@ -78,9 +78,11 @@ def pctiles(ratios: dict[int, float], provider: str, now_utc: datetime) -> dict[
     out = {}
     for zone_id, n, pct in rows:
         ok = n >= MIN_HISTORY_HOURS and pct is not None
+        shown = round(pct, 1) if ok else None
         out[zone_id] = {
-            "wait_ratio_pctile": round(pct, 1) if ok else None,
+            "wait_ratio_pctile": shown,
             "history_hours_n": n,
-            "is_unusual": bool(ok and pct >= UNUSUAL_PCTILE),
+            # Decided on the shown value, so "95.0" and is_unusual never disagree.
+            "is_unusual": bool(ok and shown >= UNUSUAL_PCTILE),
         }
     return out

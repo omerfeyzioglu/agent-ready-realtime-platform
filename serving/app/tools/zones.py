@@ -161,11 +161,14 @@ def get_zone_history(
         ORDER BY as_of_utc""")
         .fetchall()
     )
+    # Each point is a rolling window ending at that minute, so the counts
+    # carry the window in their names: an agent read a bare "requests" as
+    # requests per minute.
     points = [
         {
             "as_of_local": local(r[0]),
-            "requests": r[1],
-            "wait_n": r[2],
+            f"requests_last_{s}": r[1],
+            f"wait_n_last_{s}": r[2],
             "wait_p50_s": None if r[3] is None else round(r[3], 1),
             "wait_p90_s": None if r[4] is None else round(r[4], 1),
             "open_requests": r[5],
@@ -180,7 +183,8 @@ def get_zone_history(
         "window": window,
         "from_local": local(since),
         "to_local": local(now_),
-        "count": len(points),
+        "points_n": len(points),
+        "values_are": f"rolling {window} windows ending at each minute (not per-minute counts)",
         "points": points,
         "freshness": freshness(last, now_, int(config.HISTORY_COMMIT_WALL_S * max(c["speed"], 1))),
         "caveats": provider_caveats(provider)
