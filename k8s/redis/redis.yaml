@@ -2,8 +2,10 @@
 # the API reads it. One instance, no disk: every key is recomputed by Flink
 # from Kafka within minutes, so a restart loses nothing that matters.
 #
-# The password lives in a Secret created outside git:
-#   kubectl -n redis create secret generic redis-auth --from-literal=password=...
+# Users and passwords live in Secrets created outside git:
+#   redis-auth (password of the default/admin user, used by probes and Flink)
+#   redis-acl  (users.acl: one line per user, passwords as SHA-256 hashes)
+# Users: default = admin; producer = may only write replay:* keys.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -25,6 +27,9 @@ data:
     # loudly instead of Redis silently evicting live features.
     maxmemory 200mb
     maxmemory-policy noeviction
+    # Users and their rights (which keys, which commands) come from a file
+    # mounted from the redis-acl Secret.
+    aclfile /etc/redis-acl/users.acl
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -55,15 +60,9 @@ spec:
       containers:
         - name: redis
           image: redis:8.10.3-alpine
-          # Kubernetes expands $(REDIS_PASSWORD) from the env below.
-          args: ["/etc/redis/redis.conf", "--requirepass", "$(REDIS_PASSWORD)"]
+          args: ["/etc/redis/redis.conf"]
           command: ["redis-server"]
           env:
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: redis-auth
-                  key: password
             # redis-cli reads this, so probes and manual checks need no -a flag.
             - name: REDISCLI_AUTH
               valueFrom:
@@ -96,9 +95,15 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/redis
+            - name: acl
+              mountPath: /etc/redis-acl
+              readOnly: true
             - name: data
               mountPath: /data
       volumes:
+        - name: acl
+          secret:
+            secretName: redis-acl
         - name: config
           configMap:
             name: redis-config

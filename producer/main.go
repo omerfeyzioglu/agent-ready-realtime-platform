@@ -31,6 +31,7 @@ type options struct {
 	startAt, until                         string
 	limit                                  int64
 	resume                                 bool
+	redisAddr, redisUser                   string
 }
 
 func main() {
@@ -48,6 +49,8 @@ func main() {
 	flag.StringVar(&o.until, "until", "", "stop at this UTC time (RFC 3339)")
 	flag.Int64Var(&o.limit, "limit", 0, "stop after this many events (0 = no limit)")
 	flag.BoolVar(&o.resume, "resume", true, "kafka sink: continue after the newest event already in the topic")
+	flag.StringVar(&o.redisAddr, "redis-addr", "", "publish the replay clock to this Redis (host:port); empty = off. Password from REDIS_PASSWORD")
+	flag.StringVar(&o.redisUser, "redis-user", "producer", "Redis user for the replay clock")
 	flag.Parse()
 	if err := run(o); err != nil {
 		logf("error: %v", err)
@@ -131,6 +134,13 @@ func run(o options) error {
 	}
 	defer closeFiles()
 
+	var pub *clockPublisher
+	if o.redisAddr != "" {
+		pub = newClockPublisher(o.redisAddr, o.redisUser, os.Getenv("REDIS_PASSWORD"))
+		defer pub.close()
+		go pub.run(ctx, o.speed)
+	}
+
 	var clock *replayClock
 	var sent, last int64
 	counts := map[string]int64{}
@@ -155,6 +165,9 @@ func run(o options) error {
 				start = from
 			}
 			clock = &replayClock{start: start, wallStart: time.Now(), speed: o.speed}
+			if pub != nil {
+				pub.clock.Store(clock)
+			}
 		}
 		if d := clock.wait(p.at); d > time.Millisecond {
 			select {
@@ -172,6 +185,10 @@ func run(o options) error {
 		}
 		sent++
 		last = p.at
+		if pub != nil {
+			pub.lastEvent.Store(p.at)
+			pub.sent.Store(sent)
+		}
 		counts[ev.EventType]++
 		if time.Since(lastLog) >= 30*time.Second {
 			lastLog = time.Now()

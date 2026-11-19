@@ -26,6 +26,15 @@ spec:
             - --months=2026-08,2026-09
             - --sink=kafka
             - --speed=10
+            # Publish the replay clock (the platform's "now") every second.
+            - --redis-addr=redis.redis:6379
+          env:
+            # Password of the restricted Redis user "producer" (replay:* only).
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-producer
+                  key: password
           resources:
             requests:
               cpu: 500m
