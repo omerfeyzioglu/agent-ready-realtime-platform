@@ -1,0 +1,119 @@
+# Online store for live features: Flink writes the latest value per zone,
+# the API reads it. One instance, no disk: every key is recomputed by Flink
+# from Kafka within minutes, so a restart loses nothing that matters.
+#
+# The password lives in a Secret created outside git:
+#   kubectl -n redis create secret generic redis-auth --from-literal=password=...
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redis
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: redis
+data:
+  redis.conf: |
+    port 6379
+    bind 0.0.0.0
+    # No persistence: no RDB snapshots, no append-only file.
+    save ""
+    appendonly no
+    # Hard memory cap below the container limit. When full, writes fail
+    # loudly instead of Redis silently evicting live features.
+    maxmemory 200mb
+    maxmemory-policy noeviction
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: redis
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  # Never two instances at once (each would hold different data).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:8.10.3-alpine
+          # Kubernetes expands $(REDIS_PASSWORD) from the env below.
+          args: ["/etc/redis/redis.conf", "--requirepass", "$(REDIS_PASSWORD)"]
+          command: ["redis-server"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: password
+            # redis-cli reads this, so probes and manual checks need no -a flag.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: password
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/redis
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
