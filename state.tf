@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Terraform state in S3: the record of every AWS resource this project
 # manages. Kept in its own bucket, apart from the data, with versioning so a
-# bad write can be rolled back. The backend itself is configured in main.tf
+# bad write can be rolled back. The backend itself is configured in versions.tf
 # (backend blocks cannot use variables, so the name is written out there).
 #
 # This bucket is created by the same configuration whose state it holds, so

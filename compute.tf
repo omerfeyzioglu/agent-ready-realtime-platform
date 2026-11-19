@@ -1,40 +1,7 @@
-terraform {
-  required_version = ">= 1.17.0"
-
-  # State lives in S3 (bucket defined in state.tf), versioned and encrypted.
-  # use_lockfile: a lock object next to the state stops two applies from
-  # writing at once (S3-native locking, no DynamoDB table needed).
-  backend "s3" {
-    bucket       = "nyc-taxi-tfstate-969788248726"
-    key          = "nyc-taxi/terraform.tfstate"
-    region       = "us-east-1"
-    encrypt      = true
-    use_lockfile = true
-  }
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.70"
-    }
-  }
-}
-
 # ---------------------------------------------------------------------------
-# Variables
+# Single EC2 server (off by default; the live stack runs on EKS instead).
+# Role (this bucket + SSM), no inbound ports, Docker at boot, idle stop.
 # ---------------------------------------------------------------------------
-
-variable "project" {
-  description = "Project name used in resource names and tags."
-  type        = string
-  default     = "nyc-taxi"
-}
-
-variable "region" {
-  description = "AWS region. The NYC TLC open data is in us-east-1 too, so transfer is free."
-  type        = string
-  default     = "us-east-1"
-}
 
 variable "enable_compute" {
   description = "Create the EC2 instance and its IAM/SG/alarm resources. When off, only S3 is created."
@@ -71,97 +38,9 @@ variable "idle_minutes" {
   }
 }
 
-# ---------------------------------------------------------------------------
-# Provider
-# ---------------------------------------------------------------------------
-
-provider "aws" {
-  region = var.region
-
-  default_tags {
-    tags = {
-      Project   = var.project
-      ManagedBy = "terraform"
-    }
-  }
-}
-
-data "aws_caller_identity" "current" {}
-
 locals {
   compute_count = var.enable_compute ? 1 : 0
 }
-
-# ---------------------------------------------------------------------------
-# S3: raw data bucket (all public access blocked)
-# ---------------------------------------------------------------------------
-
-resource "aws_s3_bucket" "raw" {
-  # Bucket names are globally unique; the account ID avoids collisions.
-  bucket = "${var.project}-raw-${data.aws_caller_identity.current.account_id}"
-}
-
-resource "aws_s3_bucket_public_access_block" "raw" {
-  bucket = aws_s3_bucket.raw.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_ownership_controls" "raw" {
-  bucket = aws_s3_bucket.raw.id
-
-  rule {
-    object_ownership = "BucketOwnerEnforced"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "raw" {
-  bucket = aws_s3_bucket.raw.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-data "aws_iam_policy_document" "raw_tls_only" {
-  statement {
-    sid     = "DenyInsecureTransport"
-    effect  = "Deny"
-    actions = ["s3:*"]
-    resources = [
-      aws_s3_bucket.raw.arn,
-      "${aws_s3_bucket.raw.arn}/*",
-    ]
-
-    principals {
-      type        = "*"
-      identifiers = ["*"]
-    }
-
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "raw" {
-  bucket = aws_s3_bucket.raw.id
-  policy = data.aws_iam_policy_document.raw_tls_only.json
-
-  # Apply the public access block first, or the policy may be rejected as "public".
-  depends_on = [aws_s3_bucket_public_access_block.raw]
-}
-
-# ---------------------------------------------------------------------------
-# IAM: EC2 role (this bucket + SSM only)
-# ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "ec2_assume" {
   statement {
@@ -222,41 +101,6 @@ resource "aws_iam_instance_profile" "ec2" {
   role = aws_iam_role.ec2[0].name
 }
 
-# ---------------------------------------------------------------------------
-# Network: default VPC, security group with no inbound access
-# ---------------------------------------------------------------------------
-
-data "aws_vpc" "default" {
-  default = true
-}
-
-# Not every AZ offers every instance type (e.g. us-east-1e); keep the ones that do.
-data "aws_ec2_instance_type_offerings" "supported" {
-  location_type = "availability-zone"
-
-  filter {
-    name   = "instance-type"
-    values = [var.instance_type]
-  }
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-
-  filter {
-    name   = "default-for-az"
-    values = ["true"]
-  }
-
-  filter {
-    name   = "availability-zone"
-    values = data.aws_ec2_instance_type_offerings.supported.locations
-  }
-}
-
 resource "aws_security_group" "ec2" {
   count = local.compute_count
 
@@ -272,10 +116,6 @@ resource "aws_security_group" "ec2" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
-
-# ---------------------------------------------------------------------------
-# EC2: single instance, Amazon Linux 2023, Docker at boot
-# ---------------------------------------------------------------------------
 
 data "aws_ami" "al2023" {
   most_recent = true
@@ -332,10 +172,7 @@ resource "aws_instance" "main" {
   }
 }
 
-# ---------------------------------------------------------------------------
-# Idle stop: stop the instance when CPU stays low
-# ---------------------------------------------------------------------------
-
+# Idle stop: stop the instance when CPU stays low.
 resource "aws_cloudwatch_metric_alarm" "idle_stop" {
   count = local.compute_count
 
@@ -356,14 +193,6 @@ resource "aws_cloudwatch_metric_alarm" "idle_stop" {
   treat_missing_data  = "missing" # no data while stopped; keep the current state
 
   alarm_actions = ["arn:aws:automate:${var.region}:ec2:stop"]
-}
-
-# ---------------------------------------------------------------------------
-# Outputs
-# ---------------------------------------------------------------------------
-
-output "bucket_name" {
-  value = aws_s3_bucket.raw.bucket
 }
 
 output "instance_id" {
