@@ -21,10 +21,11 @@ spec:
         - name: producer
           image: 969788248726.dkr.ecr.us-east-1.amazonaws.com/nyc-taxi/producer:IMAGE_TAG
           args:
-            - --months=2026-08
+            # Both live months; continues after the newest event already in
+            # the topic. Speed 10 = one data hour every 6 minutes.
+            - --months=2026-08,2026-09
             - --sink=kafka
-            - --speed=60
-            - --until=2026-08-01T05:00:00Z
+            - --speed=10
           resources:
             requests:
               cpu: 500m
