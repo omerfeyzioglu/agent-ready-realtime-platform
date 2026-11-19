@@ -29,6 +29,8 @@ def _summary(result) -> dict:
         "window",
         "as_of_utc",
         "count",
+        "zones_scored",
+        "zones_above_normal_range",
     )
     out = {k: result[k] for k in keys if k in result}
     fresh = result.get("freshness")

@@ -3,7 +3,7 @@
 from datetime import timedelta
 from typing import Any
 
-from .. import baseline, config, places, sources
+from .. import baseline, config, places, scores, sources
 from ..audit import audited
 from .common import (
     NY,
@@ -24,8 +24,9 @@ from .common import (
 @audited
 def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int = 10) -> dict[str, Any]:
     """Zones where riders wait much longer than normal right now: every zone's
-    live median wait divided by its normal for this weekday and hour,
-    highest first. Zones with too few trips or a weak baseline are left out
+    live median wait divided by its normal for this weekday and hour
+    (wait_ratio), ranked by how unusual that ratio is for the zone itself
+    (wait_ratio_pctile against its own last 8 weeks; 95+ = is_unusual). Zones with too few trips or a weak baseline are left out
     (and counted). This answers "where is there a driver shortage right now"."""
     check(provider, window)
     top = max(1, min(int(top), 30))
@@ -86,7 +87,20 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
                 "open_request_max_age_s": num(o.get("open_request_max_age_s")) if o else None,
             }
         )
-    scored.sort(key=lambda x: x["wait_ratio"], reverse=True)
+    # Rank by how unusual the wait is for each zone itself (percentile against
+    # its own last 8 weeks), then by the ratio. A plain ratio would favour
+    # zones that always swing a lot.
+    pct = scores.pctiles({x["zone"]["zone_id"]: x["wait_ratio"] for x in scored}, provider, c["now"])
+    for x in scored:
+        x.update(pct.get(x["zone"]["zone_id"], {}))
+    scored.sort(
+        key=lambda x: (
+            x.get("wait_ratio_pctile") is not None,
+            x.get("wait_ratio_pctile") or 0,
+            x["wait_ratio"],
+        ),
+        reverse=True,
+    )
     return {
         "status": "ok",
         "provider": provider,
@@ -94,14 +108,19 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
         "as_of_utc": iso(as_of),
         "as_of_local": local(as_of),
         "freshness": freshness(as_of, c["now"], config.LIVE_SLA_S),
-        "count": len(scored),
+        # Explicit names: an agent read a bare "count" as "zones above normal".
+        "zones_scored": len(scored),
+        "zones_above_normal_range": sum(1 for x in scored if x["above_normal_range"]),
+        "zones_unusual": sum(1 for x in scored if x.get("is_unusual")),
+        "zones_returned": min(top, len(scored)),
         "zones": scored[:top],
         "left_out": skipped,
         "caveats": provider_caveats(provider)
         + [
             "wait_ratio = live median wait / normal median wait for this weekday and hour. "
-            "Zones differ in how much they swing; a percentile score against each zone's own "
-            "history is not live yet.",
+            "wait_ratio_pctile = share of the zone's own hours in the last 8 weeks with a lower ratio "
+            "(95+ = is_unusual). Ranked by percentile, then ratio.",
+            "The percentile compares a short live window with hourly history; short windows swing more.",
             f"Baseline hour: {mid_local:%H}:00 local; the live value covers {window}.",
             "Only completed trips are in the data; unfulfilled requests are invisible.",
         ],

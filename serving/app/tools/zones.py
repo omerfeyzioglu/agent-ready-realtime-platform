@@ -3,7 +3,7 @@
 from datetime import timedelta
 from typing import Any
 
-from .. import baseline, config, sources
+from .. import baseline, config, scores, sources
 from ..audit import audited
 from .common import (
     NY,
@@ -88,10 +88,13 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
 
     comparison = {}
     if metrics and p50 is not None and b.get("wait_p50_s"):
+        ratio = round(p50 / b["wait_p50_s"], 2)
         comparison = {
-            "wait_ratio": round(p50 / b["wait_p50_s"], 2),
+            "wait_ratio": ratio,
             "above_normal_range": b.get("wait_p75_s") is not None and p50 > b["wait_p75_s"],
             "below_normal_range": b.get("wait_p25_s") is not None and p50 < b["wait_p25_s"],
+            # How unusual for THIS zone: rank against its own last 8 weeks.
+            **scores.pctiles({zone_id: ratio}, provider, c["now"])[zone_id],
         }
     if wait_n < config.LOW_SAMPLE_WAITS:
         caveats.append(f"Only {wait_n} waits in this window: too few to rank or alert on.")
@@ -99,6 +102,10 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
         caveats.append(f"Weak baseline: only {b['wait_weeks_n']} usable earlier weeks (need 3).")
     caveats.append(
         f"Baseline is per hour ({mid.astimezone(NY):%H}:00 local); the live value covers {window}."
+    )
+    caveats.append(
+        "wait_ratio_pctile ranks this live window against the zone's hourly ratios of the last 8 "
+        "weeks; short windows swing more than hours, so read 95+ as unusual, not as certain."
     )
     caveats.append("Only completed trips are in the data; unfulfilled requests are invisible.")
 

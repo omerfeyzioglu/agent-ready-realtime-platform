@@ -8,11 +8,29 @@ from .common import live_definitions
 
 @audited
 def get_catalog() -> dict[str, Any]:
-    """What this platform can and cannot answer. Check it before answering a
-    question about a topic you have not seen here; if the topic is listed as
-    not available, say so and do not estimate it from other data."""
+    """What this platform can and cannot answer. Describe your capabilities
+    only from this list (questions_answerable / not_built_yet), never from
+    general knowledge. If a topic is not available or not built yet, say so
+    and do not estimate it from other data."""
     d = live_definitions()
     return {
+        "questions_answerable": [
+            "What is 'now' in the replay, and is the live data current? (now)",
+            "Where is there a driver shortage right now, ranked? (find_shortages)",
+            "How is a place or zone doing right now vs its normal, over 15 or 30 minutes? (get_zone_now)",
+            "How unusual is a zone's wait vs its own last 8 weeks (percentile)? (get_zone_now, find_shortages)",
+            "How did a zone develop minute by minute over the last hours? (get_zone_history)",
+            "Is the shortage demand-side (requests above expected) or supply-side? (get_zone_now)",
+            "Which zones does a place name cover? (resolve_place)",
+            "What does a metric mean? (describe_metric)",
+        ],
+        "not_built_yet": {
+            "recurring weekday-hour shortage patterns": "planned (batch); cannot be answered yet",
+            "incentive plans (where and when to pay extra)": "planned; only ad-hoc reasoning on live data now",
+            "revenue, fares or driver pay totals per zone or period": "planned as a governed batch metric",
+            "data pipeline health (lag, failures, lineage)": "planned for the reliability agent",
+            "weather or events per zone": "raw data exists, not modelled yet",
+        },
         "live_metrics_per_zone": {
             name: {
                 "unit": f.get("unit"),
@@ -32,7 +50,6 @@ def get_catalog() -> dict[str, Any]:
             "safety reports, incidents, complaints, ratings": "no such data in any source",
             "driver or rider identities": "not in the data",
             "prices shown to riders / surge multipliers": "not in the data (only fares actually paid, batch)",
-            "weather or events per zone": "not built yet",
         },
     }
 

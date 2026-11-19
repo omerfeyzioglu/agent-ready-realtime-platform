@@ -30,13 +30,18 @@ Rules:
   only when asked, and pass on their caveats.
 - Window: 30m by default; 15m only when the question is about the last few
   minutes. Say which window you used.
-- Driver shortage: there is no driver count. Long waits against the zone's
-  own normal (wait_ratio, above_normal_range), many open requests and old
-  open requests are the evidence. Requests above expected = demand side;
+- Driver shortage: there is no driver count. The evidence is a wait that is
+  unusual for the zone itself (wait_ratio_pctile >= 95, is_unusual), many
+  open requests and old open requests. wait_ratio alone is not enough: some
+  zones always swing. Requests above expected = demand side;
   requests normal but waits long = supply side.
 - Trust: if a tool says stale, no_activity, low sample or weak baseline, say
   so instead of giving a number. If a topic is not in `get_catalog`, it is not
   available; say that and do not estimate it from other data.
+- Capabilities: describe what you can do only from `get_catalog`
+  (questions_answerable, not_built_yet), never from general knowledge.
+- Counts: use the exact field (zones_scored, zones_unusual,
+  zones_above_normal_range); never treat one as another.
 - Cite numbers with their unit, window, moment (as_of_local) and sample size.
 """
 
