@@ -1,0 +1,76 @@
+# Live features: computed by Flink from trip-events, served from Redis.
+# This file is the definition of record; the Flink job
+# (flink/live-features/) implements it and the API reads names, units and
+# freshness targets from it. Same meaning = same name as the batch tables
+# in transform/models/features/.
+
+version: v1
+
+source:
+  topic: trip-events
+  time: event_time            # replay time, never the wall clock
+
+scope:
+  grain: zone x provider
+  zone: pickup zone of the request
+  providers: [uber, lyft, all]  # never mixed; tools take a provider parameter
+  excluded:
+    - pickup zones 264 (Unknown) and 265 (Outside of NYC), as in batch
+    - trips whose arrival or pickup comes before the request (out of order)
+
+refresh: every minute, at the minute boundary (event time)
+
+windowed:
+  key: "feat:zone_window:v1:{zone_id}:{provider}:{window}"
+  windows: [15m, 30m]         # 30m is the default; 15m for a narrow moment
+  fields:
+    requests:
+      unit: count
+      definition: requests made in [window_start, window_end)
+    wait_p50_s:
+      unit: seconds
+      definition: >
+        Median of request -> driver arrival for trips whose driver arrived
+        in the window. Same quantile as batch (linear interpolation).
+        Batch counts a wait in its request hour; live counts it when the
+        driver arrives, because a wait is only known then.
+    wait_p90_s:
+      unit: seconds
+      definition: 90th percentile of the same waits; the slow tail
+    wait_n:
+      unit: count
+      definition: waits behind wait_p50_s and wait_p90_s
+    is_low_sample:
+      definition: wait_n < 10; do not rank or alert on this value
+    window_start_utc: {definition: window start, inclusive}
+    window_end_utc: {definition: window end, exclusive; the moment the value describes}
+
+open:
+  key: "feat:zone_open:v1:{zone_id}:{provider}"
+  fields:
+    open_requests:
+      unit: count
+      definition: >
+        Requests made before as_of_utc whose driver has not arrived (and
+        that were not picked up). Rises before wait times do, because a
+        wait is only measured once the driver arrives. Unfulfilled requests
+        are not in the data, so this undercounts real demand.
+    open_request_max_age_s:
+      unit: seconds
+      definition: age of the oldest open request at as_of_utc
+    as_of_utc: {definition: the moment the values describe}
+
+common_fields:
+  computed_at_utc: wall-clock time Flink wrote the value (latency, freshness)
+  feature_version: definition version (v1)
+
+heartbeat:
+  key: "feat:live:v1:heartbeat"
+  definition: >
+    Latest as_of_utc written and when. A zone key that is missing while the
+    heartbeat is fresh means no activity in that zone; a stale heartbeat
+    means the pipeline has stopped.
+
+freshness:
+  ttl_s: 600                  # keys not refreshed for 10 minutes disappear
+  sla: 2 minutes behind the replay clock

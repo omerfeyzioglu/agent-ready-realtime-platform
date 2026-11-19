@@ -25,3 +25,4 @@ transform/.user.yml
 
 # Go producer binary
 producer/producer
+flink/live-features/target/
