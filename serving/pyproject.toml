@@ -1,0 +1,18 @@
+[project]
+name = "nyc-ride-ops-api"
+version = "0.1.0"
+description = "FastAPI + MCP tools over the live and batch zone features"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi==0.165.0",
+    "uvicorn[standard]==0.54.0",
+    "mcp==2.3.0",
+    "redis==8.1.0",
+    "duckdb==2.0.0",
+    "pytz",            # DuckDB needs it to hand TIMESTAMPTZ values to Python
+    "pyyaml",
+    "boto3",
+]
+
+[tool.ruff]
+line-length = 110

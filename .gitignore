@@ -26,3 +26,5 @@ transform/.user.yml
 # Go producer binary
 producer/producer
 flink/live-features/target/
+serving/.venv/
+serving/audit/

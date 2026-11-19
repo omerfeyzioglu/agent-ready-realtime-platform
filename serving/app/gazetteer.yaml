@@ -1,0 +1,28 @@
+# Place names people use -> official TLC taxi zones (by zone name, checked
+# against the zone table at startup). Only names that are not already a
+# zone name need an entry here; zone names and boroughs resolve by themselves.
+places:
+  midtown: [Midtown Center, Midtown East, Midtown North, Midtown South]
+  times square: [Times Sq/Theatre District]
+  jfk: [JFK Airport]
+  laguardia: [LaGuardia Airport]
+  lga: [LaGuardia Airport]
+  newark: [Newark Airport]
+  ewr: [Newark Airport]
+  airports: [JFK Airport, LaGuardia Airport, Newark Airport]
+  financial district: [Financial District North, Financial District South]
+  lower manhattan: [Financial District North, Financial District South, Battery Park City, World Trade Center, Seaport, TriBeCa/Civic Center]
+  downtown brooklyn: [Downtown Brooklyn/MetroTech]
+  williamsburg: [Williamsburg (North Side), Williamsburg (South Side)]
+  upper east side: [Upper East Side North, Upper East Side South]
+  ues: [Upper East Side North, Upper East Side South]
+  upper west side: [Upper West Side North, Upper West Side South]
+  uws: [Upper West Side North, Upper West Side South]
+  harlem: [Central Harlem, Central Harlem North, East Harlem North, East Harlem South]
+  penn station: [Penn Station/Madison Sq West]
+  chelsea: [East Chelsea, West Chelsea/Hudson Yards]
+  hudson yards: [West Chelsea/Hudson Yards]
+  greenwich village: [Greenwich Village North, Greenwich Village South]
+  long island city: [Long Island City/Hunters Point, Long Island City/Queens Plaza]
+  lic: [Long Island City/Hunters Point, Long Island City/Queens Plaza]
+  astoria: [Astoria, Old Astoria]
