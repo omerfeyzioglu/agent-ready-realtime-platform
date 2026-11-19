@@ -1,5 +1,6 @@
 # Live features: Kafka trip-events -> per-zone minute values in Redis
-# (definitions in features/live.yaml). IMAGE_TAG is filled in at apply time:
+# (latest) and Iceberg features.feat_zone_minute_live (history);
+# definitions in features/live.yaml. IMAGE_TAG is filled in at apply time:
 #   sed "s/IMAGE_TAG/<tag>/" k8s/flink/live-features.yaml | kubectl apply -f -
 # Needs the Redis password in this namespace:
 #   kubectl -n flink create secret generic redis-auth --from-literal=password=...
@@ -14,10 +15,11 @@ spec:
   serviceAccount: flink
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "1"
-    # Checkpoints only protect the job's state (open requests, recent
-    # waits); Redis is written every minute regardless. Every minute keeps
-    # a restart's replay short.
-    execution.checkpointing.interval: 1min
+    # Every 5 minutes: save state (open requests, recent waits), commit the
+    # Iceberg rows written since the last checkpoint and the Kafka offsets
+    # together. Redis is written every minute regardless; the history table
+    # lags by up to 5 minutes, and fewer commits mean fewer small files.
+    execution.checkpointing.interval: 5min
     execution.checkpointing.mode: EXACTLY_ONCE
     execution.checkpointing.dir: s3://nyc-taxi-raw-969788248726/ops/flink/live-features/checkpoints
     execution.checkpointing.savepoint-dir: s3://nyc-taxi-raw-969788248726/ops/flink/live-features/savepoints

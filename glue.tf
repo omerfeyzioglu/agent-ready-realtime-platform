@@ -12,3 +12,9 @@ resource "aws_glue_catalog_database" "raw" {
 output "glue_raw_database" {
   value = aws_glue_catalog_database.raw.name
 }
+
+resource "aws_glue_catalog_database" "features" {
+  name         = "features"
+  description  = "Feature layer: Iceberg tables written by streaming jobs (batch features stay plain Parquet under lake/features)"
+  location_uri = "s3://${aws_s3_bucket.raw.id}/lake/features"
+}

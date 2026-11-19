@@ -30,6 +30,26 @@
       <scope>provided</scope>
     </dependency>
 
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-table-runtime</artifactId>
+      <version>${flink.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Iceberg and Hadoop classes come from jars in the image's lib/. -->
+    <dependency>
+      <groupId>org.apache.iceberg</groupId>
+      <artifactId>iceberg-flink-runtime-2.1</artifactId>
+      <version>1.11.0</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-client-api</artifactId>
+      <version>3.4.1</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- Packed into the job jar. -->
     <dependency>
       <groupId>org.apache.flink</groupId>

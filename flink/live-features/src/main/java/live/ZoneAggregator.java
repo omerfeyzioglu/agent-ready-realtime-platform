@@ -17,17 +17,16 @@ import java.util.Map;
 /**
  * Stage 2, keyed by zone|provider: keeps the last 30 minutes of requests and
  * waits plus the currently open requests, and at every minute boundary of
- * event time writes one row per window and one "open" row.
+ * event time emits one ZoneMinute with both windows and the open requests.
  *
  * A timer fires when the watermark passes the minute, i.e. when every
  * event before that minute has been seen. While a zone has anything in its
  * last 30 minutes it keeps reporting every minute; when it falls silent
  * the timers stop and its Redis keys expire.
  */
-public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneSnapshot> {
+public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneMinute> {
 
     private static final long MINUTE = 60_000L;
-    private static final long[] WINDOWS_MIN = {15, 30};
     private static final long KEEP_MS = 30 * MINUTE;
     /** Open requests older than this are dropped as lost (a trip never closed). */
     private static final long OPEN_MAX_MS = 2 * 3600_000L;
@@ -50,7 +49,7 @@ public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneSna
     }
 
     @Override
-    public void processElement(Signal s, Context ctx, Collector<ZoneSnapshot> out) throws Exception {
+    public void processElement(Signal s, Context ctx, Collector<ZoneMinute> out) throws Exception {
         switch (s.kind) {
             case Signal.REQUEST -> {
                 requestTimes.add(s.atMs);
@@ -78,7 +77,7 @@ public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneSna
     }
 
     @Override
-    public void onTimer(long t, OnTimerContext ctx, Collector<ZoneSnapshot> out) throws Exception {
+    public void onTimer(long t, OnTimerContext ctx, Collector<ZoneMinute> out) throws Exception {
         String[] key = ctx.getCurrentKey().split("\\|");
         int zoneId = Integer.parseInt(key[0]);
         String provider = key[1];
@@ -99,29 +98,16 @@ public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneSna
         requestTimes.update(reqs);
         waits.update(ws);
 
-        for (long minutes : WINDOWS_MIN) {
-            long start = t - minutes * MINUTE;
-            ZoneSnapshot row = base("window", zoneId, provider, t);
-            row.window = minutes + "m";
-            row.windowStartMs = start;
-            for (Long r : reqs) {
-                if (r >= start && r < t) {
-                    row.requests++;
-                }
-            }
-            long[] inWindow = ws.stream().filter(w -> w[0] >= start && w[0] < t).mapToLong(w -> w[1]).toArray();
-            row.waitN = inWindow.length;
-            if (inWindow.length > 0) {
-                long[] sorted = Quantiles.sorted(inWindow);
-                row.waitP50S = Quantiles.cont(sorted, 0.50);
-                row.waitP90S = Quantiles.cont(sorted, 0.90);
-            }
-            out.collect(row);
-        }
+        ZoneMinute m = new ZoneMinute();
+        m.zoneId = zoneId;
+        m.provider = provider;
+        m.asOfMs = t;
+        m.computedAtMs = System.currentTimeMillis();
+        fillWindow(m.w15, 15, t, reqs, ws);
+        fillWindow(m.w30, 30, t, reqs, ws);
 
         // Open requests as of t: made before t and not closed before t.
         // Closed (before t) and lost requests leave the state.
-        ZoneSnapshot o = base("open", zoneId, provider, t);
         long oldest = Long.MAX_VALUE;
         List<String> done = new ArrayList<>();
         for (Map.Entry<String, long[]> e : open.entries()) {
@@ -130,17 +116,17 @@ public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneSna
             if (closedAt < t || requestedAt < t - OPEN_MAX_MS) {
                 done.add(e.getKey());
             } else if (requestedAt < t) {
-                o.openRequests++;
+                m.openRequests++;
                 oldest = Math.min(oldest, requestedAt);
             }
         }
         for (String id : done) {
             open.remove(id);
         }
-        if (o.openRequests > 0) {
-            o.openRequestMaxAgeS = (t - oldest) / 1000;
+        if (m.openRequests > 0) {
+            m.openRequestMaxAgeS = (t - oldest) / 1000;
         }
-        out.collect(o);
+        out.collect(m);
 
         // Keep reporting while anything is left; otherwise go quiet.
         if (!reqs.isEmpty() || !ws.isEmpty() || !open.isEmpty()) {
@@ -151,12 +137,20 @@ public class ZoneAggregator extends KeyedProcessFunction<String, Signal, ZoneSna
         }
     }
 
-    private static ZoneSnapshot base(String kind, int zoneId, String provider, long asOf) {
-        ZoneSnapshot r = new ZoneSnapshot();
-        r.kind = kind;
-        r.zoneId = zoneId;
-        r.provider = provider;
-        r.asOfMs = asOf;
-        return r;
+    private static void fillWindow(ZoneMinute.WindowValues v, long minutes, long t,
+                                   List<Long> reqs, List<long[]> ws) {
+        long start = t - minutes * MINUTE;
+        for (Long r : reqs) {
+            if (r >= start && r < t) {
+                v.requests++;
+            }
+        }
+        long[] inWindow = ws.stream().filter(w -> w[0] >= start && w[0] < t).mapToLong(w -> w[1]).toArray();
+        v.waitN = inWindow.length;
+        if (inWindow.length > 0) {
+            long[] sorted = Quantiles.sorted(inWindow);
+            v.waitP50S = Quantiles.cont(sorted, 0.50);
+            v.waitP90S = Quantiles.cont(sorted, 0.90);
+        }
     }
 }

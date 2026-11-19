@@ -1,4 +1,5 @@
-# Live features: computed by Flink from trip-events, served from Redis.
+# Live features: computed by Flink from trip-events, served from Redis,
+# kept minute by minute in Iceberg.
 # This file is the definition of record; the Flink job
 # (flink/live-features/) implements it and the API reads names, units and
 # freshness targets from it. Same meaning = same name as the batch tables
@@ -70,6 +71,16 @@ heartbeat:
     Latest as_of_utc written and when. A zone key that is missing while the
     heartbeat is fresh means no activity in that zone; a stale heartbeat
     means the pipeline has stopped.
+
+history:
+  table: features.feat_zone_minute_live   # Iceberg (Glue), lake/features/zone_minute_live
+  grain: zone x provider x minute (as_of_utc)
+  columns: >
+    The Redis fields of one minute in one row; window fields carry the
+    window as a suffix (requests_15m, wait_p50_s_30m, ...).
+  written_by: the same record as Redis (one computation, two sinks)
+  committed: every Flink checkpoint (5 min), exactly-once with the Kafka offsets
+  partitioning: day(as_of_utc)
 
 freshness:
   ttl_s: 600                  # keys not refreshed for 10 minutes disappear
