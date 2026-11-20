@@ -6,7 +6,7 @@ locals {
   # One repository per image built in this project, so each image line has
   # its own "keep the last 5" count. ("flink-jobs" holds the raw writer;
   # the name predates this rule.)
-  ecr_repositories = var.enable_eks ? toset(["producer", "flink-jobs", "live-features"]) : toset([])
+  ecr_repositories = var.enable_eks ? toset(["producer", "flink-jobs", "live-features", "api"]) : toset([])
 }
 
 resource "aws_ecr_repository" "this" {

@@ -1,0 +1,4 @@
+.venv
+audit
+**/__pycache__
+run_local.sh

@@ -131,6 +131,10 @@ module "eks" {
     kube-proxy = {}
     coredns    = {}
 
+    # CPU/memory usage per node and pod (kubectl top, Lens graphs). Without
+    # it the Metrics API does not exist and those views stay empty.
+    metrics-server = {}
+
     # Lets pods assume IAM roles (one role per service).
     eks-pod-identity-agent = {
       before_compute = true
