@@ -28,3 +28,6 @@ producer/producer
 flink/live-features/target/
 serving/.venv/
 serving/audit/
+
+# Eval run transcripts (local paths, session ids); results are summarised in docs
+evals/runs/

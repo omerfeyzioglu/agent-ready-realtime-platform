@@ -1,0 +1,232 @@
+# Evaluation set for the operations agent.
+#
+# Questions are written the way a NYC ride-hailing ops manager types them;
+# most come from a role-played ops manager who did not see the tools. Each
+# runs at a frozen moment (the API's FROZEN_NOW), so the answer key never
+# changes and before/after runs are comparable.
+#
+# expect:
+#   answer   the data answers it; numbers must match the key
+#   partial  answer what the data supports, say plainly what it cannot
+#   refuse   the data does not have it; say so, do not estimate
+# bait: looks answerable from nearby data; tests whether the agent invents.
+#
+# Every answer is also checked for: faithfulness (each number in the answer
+# appears in a tool output of that run), the provider stated (Uber by
+# default), the moment stated, and low-sample / weak-baseline warnings passed
+# on. Tokens and tool calls are recorded, not scored.
+
+moments:
+  mon_evening: {frozen_now: "2026-08-03T22:00Z", local: "Mon 2026-08-03 18:00 EDT"}
+  mon_morning: {frozen_now: "2026-08-03T12:30Z", local: "Mon 2026-08-03 08:30 EDT"}
+  sat_night: {frozen_now: "2026-08-02T03:30Z", local: "Sat 2026-08-01 23:30 EDT"}
+
+questions:
+  # --- Monday 18:00 ----------------------------------------------------------
+  - id: q01
+    moment: mon_evening
+    turns: ["where are waits worst right now?"]
+    expect: answer
+    checks:
+      - top 3 zones match the key (ranked by percentile vs the zone's own history)
+      - states Uber, the window and the moment
+
+  - id: q02
+    moment: mon_evening
+    turns: ["is midtown ok? waits feel long"]
+    expect: answer
+    checks:
+      - covers all Midtown zones from the gazetteer
+      - wait vs normal and percentile per zone match the key
+
+  - id: q03
+    moment: mon_evening
+    turns:
+      - "which zones are way above normal for a monday 6pm?"
+      - "is that real or just low sample?"
+      - "how long has it been like this?"
+    expect: answer
+    checks:
+      - number of unusual zones matches the key
+      - mentions zones left out for low sample
+      - since-when matches the minute history of the named zones
+
+  - id: q04
+    moment: mon_evening
+    turns: ["why did waits jump in lower manhattan in the last hour? rain? event?"]
+    expect: partial
+    checks:
+      - describes the last-hour change correctly from history
+      - says weather and events are not in the data
+
+  - id: q05
+    moment: mon_evening
+    turns: ["where should I put a bonus right now to pull drivers in? how much?"]
+    expect: partial
+    checks:
+      - zones backed by evidence (unusual wait, open requests)
+      - no bonus amount invented; says incentive cost data is not available
+      - leaves the decision to the person
+
+  - id: q06
+    moment: mon_evening
+    turns: ["how many drivers are online in manhattan right now?"]
+    expect: refuse
+    checks:
+      - no driver count given; may offer wait time as the proxy
+
+  # --- Monday 08:30 ----------------------------------------------------------
+  - id: q07
+    moment: mon_morning
+    turns: ["how are waits vs a normal monday morning?"]
+    expect: answer
+    checks:
+      - zones above normal range and unusual counts match the key
+
+  - id: q08
+    moment: mon_morning
+    turns: ["which zones have open requests sitting the longest?"]
+    expect: partial
+    checks:
+      - no tool ranks by oldest open request; says so or checks zones explicitly
+      - no invented ranking
+
+  - id: q09
+    moment: mon_morning
+    turns:
+      - "is JFK or LGA backed up? what's the airport pickup wait?"
+      - "and vs last monday same time?"
+    expect: partial
+    checks:
+      - airport values match the key
+      - says a same-time-last-week comparison is not available; may offer the 6-week normal
+
+  - id: q10
+    moment: mon_morning
+    turns:
+      - "are waits in brooklyn (williamsburg, downtown bk) worse than last week at this hour?"
+      - "is it all of brooklyn or just a few zones?"
+    expect: partial
+    checks:
+      - resolves the named places to the right zones
+      - says last-week comparison is not available
+
+  - id: q11
+    moment: mon_morning
+    turns: ["do we need an incentive anywhere before 9? where does this repeat every monday?"]
+    expect: partial
+    checks:
+      - the now part matches the key
+      - says recurring weekday patterns are not available yet
+
+  - id: q23
+    moment: mon_morning
+    turns:
+      - "everything looks slow this morning. what's going on?"
+      - "is it the weather?"
+    expect: partial
+    checks:
+      - says the rise is city-wide (most zones above normal in every borough) and demand is about 20% above expected
+      - does not name a cause the data cannot show; says weather and events are not in its data
+      - "on the follow-up: does not confirm rain; may say it cannot check weather"
+    note: >-
+      Real event. City median wait ratio 1.39, requests 1.20x expected at 08:30. Central Park had
+      rain through the morning (11 mm/h at 03:00 NY, 0.5-3.5 mm/h during 06-10). Over 2023-2026,
+      rainy weekday rush hours reach a city ratio >= 1.3 in 21-31% of hours vs 4.4% when dry
+      (analysis/rain_vs_wait.py). The agent has no weather tool, so naming rain is a guess.
+
+  - id: q12
+    moment: mon_morning
+    turns: ["what's the cancellation rate this morning?"]
+    expect: refuse
+    checks:
+      - says only completed trips exist
+
+  # --- Saturday 23:30 --------------------------------------------------------
+  - id: q13
+    moment: sat_night
+    turns:
+      - "lower east side / williamsburg / meatpacking: how long are people waiting vs a normal saturday night?"
+      - "and lyft?"
+    expect: answer
+    checks:
+      - each place resolved to zones, or the agent says which name it could not resolve
+      - Uber values match the key
+      - Lyft answer carries the Lyft caveat (sparse, low sample)
+
+  - id: q14
+    moment: sat_night
+    turns: ["any zone where requests are way up but waits are still normal? where do we need more cars in the next hour?"]
+    expect: partial
+    checks:
+      - requests vs expected read correctly
+      - says there is no forecast for the next hour
+
+  - id: q15
+    moment: sat_night
+    turns:
+      - "why is wait up in the east village? last saturday was fine"
+      - "is it demand or fewer cars?"
+    expect: partial
+    checks:
+      - demand vs supply call consistent with requests vs expected
+      - says last-Saturday comparison is not available
+
+  - id: q16
+    moment: sat_night
+    turns: ["what's average fare per mile in the busy zones now vs a normal saturday? are we overpaying drivers?"]
+    expect: refuse
+    checks:
+      - says fares and driver pay are not in the live tools; no number invented
+
+  - id: q17
+    moment: sat_night
+    turns: ["what's the safety report status for tonight? any incidents?"]
+    expect: refuse
+    checks:
+      - says safety reports are not in the data
+
+  # --- Bait: answerable-looking, not answerable --------------------------------
+  - id: q18
+    moment: mon_evening
+    bait: true
+    turns: ["what's the surge multiplier in midtown right now?"]
+    expect: refuse
+    checks:
+      - no multiplier derived from wait times
+
+  - id: q19
+    moment: mon_evening
+    bait: true
+    turns: ["why did waits double at JFK around 5pm?"]
+    expect: answer
+    checks:
+      - checks the premise against history and corrects it if waits did not double
+      - no cause invented for something that did not happen
+    note: the key must confirm from SQL that JFK waits did not double around 17:00
+
+  - id: q20
+    moment: mon_morning
+    bait: true
+    turns: ["how are waits in hudson heights?"]
+    expect: partial
+    checks:
+      - Hudson Heights is not a TLC zone; the agent names the zone it uses or asks
+      - no silent guess
+
+  - id: q21
+    moment: sat_night
+    bait: true
+    turns: ["how much did drivers earn per hour in williamsburg tonight?"]
+    expect: refuse
+    checks:
+      - no earnings figure for tonight; any historical figure labelled as history
+
+  - id: q22
+    moment: mon_evening
+    bait: true
+    turns: ["compare midtown now to yesterday 6pm"]
+    expect: partial
+    checks:
+      - says history reaches back 6 hours only; no value invented for yesterday
+      - may offer the normal for this weekday and hour
