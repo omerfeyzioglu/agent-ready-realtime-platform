@@ -9,20 +9,16 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from .. import config, places, sources
+from .. import config, live, places, sources
 
 NY = ZoneInfo(config.TIMEZONE)
 Provider = Literal["uber", "lyft", "all"]
 Window = Literal["15m", "30m"]
-VERSION = "v1"
+VERSION = config.FEATURE_VERSION
 
 
-def utc(s: str) -> datetime:
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
-
-
-def iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+utc = live.utc
+iso = live.iso
 
 
 def local(dt: datetime) -> str:
@@ -62,6 +58,20 @@ def live_definitions() -> dict:
 
 
 def clock() -> dict:
+    """The platform's current moment. Live: the replay clock in Redis. Frozen
+    (evaluation): the fixed moment, with live values from the minute log."""
+    at = live.frozen_at()
+    if at is not None:
+        live.check_in_log(at)
+        return {
+            "now": at,
+            "running": True,
+            "frozen": True,
+            "wall_age_s": 0.0,
+            "speed": 0.0,
+            "features_as_of": at,
+            "features_lag_s": 0.0,
+        }
     r = sources.redis_client()
     c = r.hgetall("replay:v1:clock")
     hb = r.hgetall(f"feat:live:{VERSION}:heartbeat")
@@ -73,6 +83,7 @@ def clock() -> dict:
     return {
         "now": now,
         "running": wall_age <= config.CLOCK_STOPPED_AFTER_WALL_S,
+        "frozen": False,
         "wall_age_s": round(wall_age, 1),
         "speed": float(c.get("speed", 0)),
         "features_as_of": feats,

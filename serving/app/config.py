@@ -21,6 +21,13 @@ GAZETTEER = Path(__file__).with_name("gazetteer.yaml")
 AUDIT_LOG = Path(os.getenv("AUDIT_LOG", REPO_ROOT / "serving" / "audit" / "tool_calls.jsonl"))
 
 TIMEZONE = "America/New_York"
+FEATURE_VERSION = "v1"  # Redis key and response version of the live features
+
+# Evaluation mode: the server stands still at this moment (ISO UTC, e.g.
+# 2026-08-03T22:00Z) and reads live values from the Iceberg minute log
+# instead of Redis. Unset = live. Answers are then reproducible and need no
+# cluster.
+FROZEN_NOW = os.getenv("FROZEN_NOW", "")
 
 # Freshness rules, in replay time (the platform's clock).
 LIVE_SLA_S = 120  # live features may lag the replay clock by 2 minutes

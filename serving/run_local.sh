@@ -7,8 +7,17 @@
 #
 # MCP clients that read a project .mcp.json pick the server up in any new session
 # opened in this project (.mcp.json stays out of git: it points at localhost).
+#
+#   FROZEN_NOW=2026-08-03T22:00Z serving/run_local.sh
+#                                   # frozen moment (evaluation): values from the
+#                                   # Iceberg minute log, no cluster or Redis needed
 set -euo pipefail
 cd "$(dirname "$0")"
+
+if [ -n "${FROZEN_NOW:-}" ]; then
+  echo "Frozen at $FROZEN_NOW. API: http://localhost:8000  (MCP: http://localhost:8000/mcp)"
+  exec .venv/bin/uvicorn app.main:app --port 8000
+fi
 
 if ! kubectl get nodes --no-headers 2>/dev/null | grep -q " Ready"; then
   echo "No Ready nodes: start the cluster first (scale the node group to 2)." >&2

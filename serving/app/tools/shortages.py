@@ -3,7 +3,7 @@
 from datetime import timedelta
 from typing import Any
 
-from .. import baseline, config, places, scores, sources
+from .. import baseline, config, live, places, scores
 from ..audit import audited
 from .common import (
     NY,
@@ -40,13 +40,7 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
             "note": "Live features are behind the replay clock; no ranking is given.",
         }
     zone_ids = list(places.zones())
-    r = sources.redis_client()
-    pipe = r.pipeline(transaction=False)
-    for z in zone_ids:
-        pipe.hgetall(f"feat:zone_window:{VERSION}:{z}:{provider}:{window}")
-        pipe.hgetall(f"feat:zone_open:{VERSION}:{z}:{provider}")
-    res = pipe.execute()
-    live = {z: (res[2 * i], res[2 * i + 1]) for i, z in enumerate(zone_ids)}
+    values = live.read(zone_ids, provider, window)
 
     minutes = window_minutes(window)
     as_of = c["features_as_of"]
@@ -58,7 +52,7 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
     )
 
     scored, skipped = [], {"no_activity": 0, "low_sample": 0, "weak_baseline": 0}
-    for z, (w, o) in live.items():
+    for z, (w, o) in values.items():
         if not w or num(w.get("wait_p50_s")) is None:
             skipped["no_activity"] += 1
             continue
@@ -125,5 +119,5 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
             "Only completed trips are in the data; unfulfilled requests are invisible.",
         ],
         "definition_version": VERSION,
-        "source": "Redis live features (Flink) for all zones + batch baseline (feat_zone_hour)",
+        "source": f"{live.source()} for all zones + batch baseline (feat_zone_hour)",
     }

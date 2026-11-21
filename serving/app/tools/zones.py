@@ -3,7 +3,7 @@
 from datetime import timedelta
 from typing import Any
 
-from .. import baseline, config, scores, sources
+from .. import baseline, config, live, scores, sources
 from ..audit import audited
 from .common import (
     NY,
@@ -33,9 +33,7 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
     check(provider, window)
     z = zone(zone_id)
     c = clock()
-    r = sources.redis_client()
-    w = r.hgetall(f"feat:zone_window:{VERSION}:{zone_id}:{provider}:{window}")
-    o = r.hgetall(f"feat:zone_open:{VERSION}:{zone_id}:{provider}")
+    w, o = live.read([zone_id], provider, window)[zone_id]
     minutes = window_minutes(window)
     caveats = provider_caveats(provider)
 
@@ -124,8 +122,7 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
         "caveats": caveats,
         "definition_version": VERSION,
         "source": (
-            f"Redis feat:zone_window:{VERSION}:{zone_id}:{provider}:{window} and "
-            f"feat:zone_open:{VERSION}:{zone_id}:{provider} (Flink live-features); "
+            f"{live.source()}: zone {zone_id}, {provider}, {window} window and open requests; "
             f"baseline from batch table feat_zone_hour"
         ),
     }

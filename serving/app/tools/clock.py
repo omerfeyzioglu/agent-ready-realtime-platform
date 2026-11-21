@@ -15,7 +15,9 @@ def now() -> dict[str, Any]:
     real-world date."""
     c = clock()
     lag = c["features_lag_s"]
-    if not c["running"]:
+    if c["frozen"]:
+        status, note = "ok", "Time is fixed at this moment (frozen replay); values are as of this minute."
+    elif not c["running"]:
         status, note = "paused", "Replay is paused: time is frozen at this moment."
     elif lag is None or lag > config.LIVE_SLA_S:
         status, note = (
