@@ -20,7 +20,7 @@ def get_catalog() -> dict[str, Any]:
             "How is a place or zone doing right now vs its normal, over 15 or 30 minutes? (get_zone_now)",
             "How unusual is a zone's wait vs its own last 8 weeks (percentile)? (get_zone_now, find_shortages)",
             "How did a zone develop minute by minute over the last hours? (get_zone_history)",
-            "Is the shortage demand-side (requests above expected) or supply-side? (get_zone_now)",
+            "Is extra demand behind a long wait (likely_driver: demand if requests >= 1.2x expected, else unclear)? (get_zone_now, find_shortages)",
             "Which zones does a place name cover? (resolve_place)",
             "What does a metric mean? (describe_metric)",
         ],

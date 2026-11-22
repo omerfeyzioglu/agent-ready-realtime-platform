@@ -102,5 +102,32 @@ def freshness(as_of: datetime | None, now: datetime, sla_s: int) -> dict:
     return out
 
 
+def likely_driver(requests: int, expected: float | None) -> dict:
+    """Why a wait may be long, decided by a fixed rule instead of by the
+    model. The data can show extra demand (more requests than expected); it
+    cannot show missing supply, because unfulfilled requests never appear.
+    So the answer is "demand" or "unclear", never "supply"."""
+    if not expected:
+        return {
+            "value": "unknown",
+            "requests_vs_expected": None,
+            "reason": "no expected request count for this weekday and hour",
+        }
+    ratio = round(requests / expected, 2)
+    if ratio >= config.DEMAND_RATIO:
+        return {
+            "value": "demand",
+            "requests_vs_expected": ratio,
+            "reason": f"requests are {ratio}x the expected count (rule: >= {config.DEMAND_RATIO}x)",
+        }
+    return {
+        "value": "unclear",
+        "requests_vs_expected": ratio,
+        "reason": f"requests are {ratio}x the expected count, not above {config.DEMAND_RATIO}x; "
+        "fewer drivers is possible but the data cannot show it (no driver count, "
+        "unfulfilled requests are invisible)",
+    }
+
+
 def window_minutes(window: str) -> int:
     return int(window.rstrip("m"))

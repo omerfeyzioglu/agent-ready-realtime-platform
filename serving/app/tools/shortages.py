@@ -14,6 +14,7 @@ from .common import (
     clock,
     freshness,
     iso,
+    likely_driver,
     local,
     num,
     provider_caveats,
@@ -64,6 +65,9 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
             skipped["weak_baseline"] += 1
             continue
         p50 = num(w["wait_p50_s"])
+        expected = (
+            None if b.get("requests_per_hour") is None else round(b["requests_per_hour"] * minutes / 60, 1)
+        )
         scored.append(
             {
                 "zone": places.zones()[z],
@@ -74,9 +78,8 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
                 "above_normal_range": b.get("wait_p75_s") is not None and p50 > b["wait_p75_s"],
                 "wait_n": int(w["wait_n"]),
                 "requests": int(w["requests"]),
-                "expected_requests": None
-                if b.get("requests_per_hour") is None
-                else round(b["requests_per_hour"] * minutes / 60, 1),
+                "expected_requests": expected,
+                "likely_driver": likely_driver(int(w["requests"]), expected),
                 "open_requests": int(o.get("open_requests", 0)) if o else 0,
                 "open_request_max_age_s": num(o.get("open_request_max_age_s")) if o else None,
             }
@@ -117,6 +120,10 @@ def find_shortages(provider: Provider = "uber", window: Window = "30m", top: int
             "The percentile compares a short live window with hourly history; short windows swing more.",
             f"Baseline hour: {mid_local:%H}:00 local; the live value covers {window}.",
             "Only completed trips are in the data; unfulfilled requests are invisible.",
+            (
+                "likely_driver is a fixed rule: demand when requests >= 1.2x expected, else unclear. "
+                "It never says supply: missing drivers cannot be seen in the data. Do not name another cause."
+            ),
         ],
         "definition_version": VERSION,
         "source": f"{live.source()} for all zones + batch baseline (feat_zone_hour)",

@@ -14,6 +14,7 @@ from .common import (
     clock,
     freshness,
     iso,
+    likely_driver,
     local,
     num,
     provider_caveats,
@@ -93,6 +94,7 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
             "below_normal_range": b.get("wait_p25_s") is not None and p50 < b["wait_p25_s"],
             # How unusual for THIS zone: rank against its own last 8 weeks.
             **scores.pctiles({zone_id: ratio}, provider, c["now"])[zone_id],
+            "likely_driver": likely_driver(int(w["requests"]), expected_requests),
         }
     if wait_n < config.LOW_SAMPLE_WAITS:
         caveats.append(f"Only {wait_n} waits in this window: too few to rank or alert on.")

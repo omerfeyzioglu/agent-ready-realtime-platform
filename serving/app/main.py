@@ -33,8 +33,10 @@ Rules:
 - Driver shortage: there is no driver count. The evidence is a wait that is
   unusual for the zone itself (wait_ratio_pctile >= 95, is_unusual), many
   open requests and old open requests. wait_ratio alone is not enough: some
-  zones always swing. Requests above expected = demand side;
-  requests normal but waits long = supply side.
+  zones always swing.
+- Cause: only `likely_driver` from the tools. "demand" = requests >= 1.2x
+  expected; "unclear" = the data cannot tell. Never say supply side, fewer
+  drivers, weather, events or commute as the cause: none is in the data.
 - Trust: if a tool says stale, no_activity, low sample or weak baseline, say
   so instead of giving a number. If a topic is not in `get_catalog`, it is not
   available; say that and do not estimate it from other data.
