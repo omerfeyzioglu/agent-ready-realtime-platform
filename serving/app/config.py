@@ -37,6 +37,8 @@ BASELINE_MIN_WEEKS = 3
 LOW_SAMPLE_WAITS = 10  # live windows; batch hours use 30
 # likely_driver: requests at least this many times the expected count = demand.
 DEMAND_RATIO = 1.2
+# Ranking by requests vs expected: smaller expected counts swing by chance.
+MIN_EXPECTED_REQUESTS = 10
 MAX_HISTORY_MINUTES = 360
 # The history table is committed every 5 minutes of WALL time (Flink
 # checkpoints), which is 5 x speed minutes of replay time. Its SLA is one

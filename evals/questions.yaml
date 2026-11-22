@@ -86,10 +86,10 @@ questions:
   - id: q08
     moment: mon_morning
     turns: ["which zones have open requests sitting the longest?"]
-    expect: partial
+    expect: answer
     checks:
-      - no tool ranks by oldest open request; says so or checks zones explicitly
-      - no invented ranking
+      - top zones by oldest open request match the key (summary.oldest_open_request)
+      - gives the age with its unit and says these are requests with no driver arrived yet
 
   - id: q09
     moment: mon_morning
@@ -110,6 +110,7 @@ questions:
     checks:
       - resolves the named places to the right zones
       - says last-week comparison is not available
+      - "on the follow-up: Brooklyn-wide numbers match the key (summary.boroughs.Brooklyn)"
 
   - id: q11
     moment: mon_morning
@@ -126,7 +127,7 @@ questions:
       - "is it the weather?"
     expect: partial
     checks:
-      - says the rise is city-wide (most zones above normal in every borough) and demand is about 20% above expected
+      - says the rise is city-wide (most zones above normal in every borough, summary.boroughs) and demand is about 20% above expected (summary.city)
       - does not name a cause the data cannot show; says weather and events are not in its data
       - "on the follow-up: does not confirm rain; may say it cannot check weather"
     note: >-

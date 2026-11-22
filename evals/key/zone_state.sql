@@ -53,10 +53,11 @@ normal as (
         zone_id,
         count(distinct date_local)                                              as weeks_n,
         count(wait_p50_s) filter (where not is_low_sample)                      as wait_weeks_n,
-        round(quantile_cont(wait_p50_s, 0.25) filter (where not is_low_sample), 1) as normal_p25_s,
-        round(quantile_cont(wait_p50_s, 0.50) filter (where not is_low_sample), 1) as normal_p50_s,
-        round(quantile_cont(wait_p50_s, 0.75) filter (where not is_low_sample), 1) as normal_p75_s,
-        round(median(requests), 1)                                              as normal_requests_per_hour
+        -- unrounded (as dbt stores them); rounded only in the final select
+        quantile_cont(wait_p50_s, 0.25) filter (where not is_low_sample)         as normal_p25_raw,
+        quantile_cont(wait_p50_s, 0.50) filter (where not is_low_sample)         as normal_p50_raw,
+        quantile_cont(wait_p50_s, 0.75) filter (where not is_low_sample)         as normal_p75_raw,
+        median(requests)                                                        as normal_requests_per_hour
     from past
     group by zone_id
 ),
@@ -68,44 +69,55 @@ joined as (
         l.open_requests, l.open_request_max_age_s,
         coalesce(n.weeks_n, 0)       as weeks_n,
         coalesce(n.wait_weeks_n, 0)  as wait_weeks_n,
-        n.normal_p25_s, n.normal_p50_s, n.normal_p75_s,
+        round(n.normal_p25_raw, 1) as normal_p25_s,
+        round(n.normal_p50_raw, 1) as normal_p50_s,
+        round(n.normal_p75_raw, 1) as normal_p75_s,
+        n.normal_p75_raw,
         round(n.normal_requests_per_hour / 2, 1) as expected_requests_30m,
+        n.normal_requests_per_hour / 2           as expected_requests_raw,
         coalesce(n.wait_weeks_n, 0) < 3          as is_baseline_weak,
-        case when l.wait_p50_s is not null and n.normal_p50_s > 0
-             then round(l.wait_p50_s / n.normal_p50_s, 2) end as wait_ratio
+        -- ranked and compared unrounded (as dbt stores it), shown rounded
+        case when l.wait_p50_s is not null and n.normal_p50_raw > 0
+             then l.wait_p50_s / n.normal_p50_raw end as wait_ratio_raw
     from zones z
     left join live l using (zone_id)
     left join normal n using (zone_id)
 ),
 
--- The zone's own hourly ratios in the 8 weeks before the moment.
+-- The zone's own hourly ratios in the 8 weeks before the moment, finished
+-- hours only (dbt: earlier hours than the scored one).
 history as (
     select zone_id, wait_ratio
     from read_parquet({ratio_files})
     where provider = $provider
       and wait_ratio is not null
       and hour_utc >= $moment_utc - interval 56 day
-      and hour_utc <  $moment_utc
+      and hour_utc + interval 1 hour <= $moment_utc
 ),
 
 ranked as (
     select
         j.zone_id,
         count(h.wait_ratio) as history_hours_n,
-        100.0 * count(*) filter (where h.wait_ratio < j.wait_ratio)
+        100.0 * count(*) filter (where h.wait_ratio < j.wait_ratio_raw)
               / nullif(count(h.wait_ratio), 0) as pctile
     from joined j
     left join history h using (zone_id)
-    where j.wait_ratio is not null
+    where j.wait_ratio_raw is not null
     group by j.zone_id
 )
 
 select
-    j.*,
+    j.* exclude (wait_ratio_raw),
+    round(j.wait_ratio_raw, 2) as wait_ratio,
+    j.wait_ratio_raw,
     r.history_hours_n,
     case when r.history_hours_n >= 200 then round(r.pctile, 1) end as wait_ratio_pctile,
     -- why a zone is or is not ranked, in the API's order of checks
     case
+        when j.wait_p50_s is null
+             and (coalesce(j.requests, 0) > 0 or coalesce(j.open_requests, 0) > 0)
+                                        then 'no_completed_waits'
         when j.wait_p50_s is null       then 'no_activity'
         when j.wait_n < 10              then 'low_sample'
         when j.is_baseline_weak or j.normal_p50_s is null then 'weak_baseline'

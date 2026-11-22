@@ -42,6 +42,13 @@ Rules:
   available; say that and do not estimate it from other data.
 - Capabilities: describe what you can do only from `get_catalog`
   (questions_answerable, not_built_yet), never from general knowledge.
+- Coverage: a top list is not the city. For "everywhere?", "whole city", a
+  borough, or "is demand up overall", call `get_city_summary`. For open
+  requests sitting longest, use find_shortages sort_by=oldest_open_request;
+  for demand, sort_by=requests_vs_expected. When a place has several zones,
+  check every zone.
+- Decisions: give the evidence and options; the person decides (bonuses,
+  amounts, actions).
 - Counts: use the exact field (zones_scored, zones_unusual,
   zones_above_normal_range); never treat one as another.
 - Cite numbers with their unit, window, moment (as_of_local) and sample size.
@@ -90,6 +97,7 @@ app.get("/v1/now")(tools.now)
 app.get("/v1/catalog")(tools.get_catalog)
 app.get("/v1/places")(tools.resolve_place)
 app.get("/v1/shortages")(tools.find_shortages)
+app.get("/v1/city")(tools.get_city_summary)
 app.get("/v1/zones/{zone_id}/now")(tools.get_zone_now)
 app.get("/v1/zones/{zone_id}/history")(tools.get_zone_history)
 app.get("/v1/metrics/{name}")(tools.describe_metric)

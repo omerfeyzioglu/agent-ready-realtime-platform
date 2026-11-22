@@ -10,10 +10,15 @@ The batch hourly ratios are loaded into DuckDB memory once per month. Only
 hours before the asked moment are used.
 """
 
+import logging
 import threading
 from datetime import datetime, timedelta
 
+import duckdb
+
 from . import config, sources
+
+log = logging.getLogger(__name__)
 
 HISTORY_WEEKS = 8
 MIN_HISTORY_HOURS = 200
@@ -48,13 +53,17 @@ def _ensure_loaded(now_utc: datetime) -> None:
                     f"INSERT INTO zone_ratio SELECT hour_utc, zone_id, provider, wait_ratio "
                     f"FROM read_parquet('{path}') WHERE wait_ratio IS NOT NULL"
                 )
-            except Exception:
-                pass  # month not built by batch (yet)
+            except duckdb.IOException as e:
+                if not sources.is_missing_file(e):
+                    raise  # not "not built yet": retry on the next call, do not hide it
+                log.info("batch month %s not built: its hours are missing from the history", m)
             _loaded.add(m)
 
 
 def pctiles(ratios: dict[int, float], provider: str, now_utc: datetime) -> dict[int, dict]:
-    """{zone_id: live wait_ratio} -> {zone_id: {wait_ratio_pctile, history_hours_n, is_unusual}}."""
+    """{zone_id: live wait_ratio} -> {zone_id: {wait_ratio_pctile, history_hours_n, is_unusual}}.
+    Pass the unrounded ratio: batch ratios are unrounded, and ranking a
+    rounded value against them shifts zones near the 95 line."""
     if not ratios:
         return {}
     _ensure_loaded(now_utc)
@@ -70,7 +79,9 @@ def pctiles(ratios: dict[int, float], provider: str, now_utc: datetime) -> dict[
         FROM live l
         LEFT JOIN zone_ratio h
           ON h.zone_id = l.zone_id AND h.provider = ?
-         AND h.hour_utc >= ?::TIMESTAMPTZ AND h.hour_utc < ?::TIMESTAMPTZ
+         AND h.hour_utc >= ?::TIMESTAMPTZ
+         -- finished hours only: the hour in progress is built from minutes after "now"
+         AND h.hour_utc + INTERVAL 1 HOUR <= ?::TIMESTAMPTZ
         GROUP BY l.zone_id""",
         [provider, since, now_utc.isoformat()],
     ).fetchall()

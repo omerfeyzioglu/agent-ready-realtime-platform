@@ -91,7 +91,10 @@ def clock() -> dict:
     }
 
 
-def freshness(as_of: datetime | None, now: datetime, sla_s: int) -> dict:
+def freshness(as_of: datetime | None, now: datetime, sla_s: int, c: dict | None = None) -> dict:
+    """fresh | stale (behind the replay clock: withheld) | paused (the replay
+    clock itself stopped, e.g. the producer is down: the clock and the
+    features freeze together, so the lag alone would still read 0)."""
     if as_of is None:
         return {"status": "unavailable", "sla_s": sla_s}
     lag = (now - as_of).total_seconds()
@@ -99,7 +102,46 @@ def freshness(as_of: datetime | None, now: datetime, sla_s: int) -> dict:
     out = {"status": status, "age_s": round(lag), "sla_s": sla_s}
     if status == "stale":
         out["reason"] = f"value is {round(lag)} s behind the replay clock; the SLA is {sla_s} s. Withheld."
+    elif c is not None and not c["running"]:
+        out["status"] = "paused"
+        out["reason"] = (
+            f"the replay clock stopped {round(c['wall_age_s'])} s ago (wall time): these are the values "
+            "at that moment, not live. Say so before using them."
+        )
     return out
+
+
+# Why a zone is or is not ranked, in this order. The eval key uses the same order.
+STATES = ("no_activity", "no_completed_waits", "low_sample", "weak_baseline", "scored")
+
+
+def classify(w: dict | None, o: dict | None, b: dict) -> str:
+    """One rule for every tool: no_activity = nothing in the window and no
+    open request; no_completed_waits = requests or open requests but no
+    driver has arrived yet (can be the worst shortage, not a quiet zone);
+    low_sample = too few waits to compare; weak_baseline = too few earlier
+    weeks; scored = comparable with normal."""
+    requests = int(w["requests"]) if w else 0
+    open_n = int(o.get("open_requests", 0)) if o else 0
+    if not w or num(w.get("wait_p50_s")) is None:
+        return "no_completed_waits" if requests > 0 or open_n > 0 else "no_activity"
+    if int(w["wait_n"]) < config.LOW_SAMPLE_WAITS:
+        return "low_sample"
+    if b["is_weak"] or not b.get("wait_p50_s"):
+        return "weak_baseline"
+    return "scored"
+
+
+def state_note(state: str, window: str) -> str | None:
+    return {
+        "no_activity": f"No requests and no open requests in the last {window}.",
+        "no_completed_waits": (
+            f"Requests or open requests in the last {window}, but no driver arrived yet, so there is "
+            "no wait to compare. Check open_requests and open_request_max_age_s: this can be a shortage."
+        ),
+        "low_sample": f"Too few completed waits in the last {window} (< {config.LOW_SAMPLE_WAITS}) to compare with normal.",
+        "weak_baseline": f"Fewer than {config.BASELINE_MIN_WEEKS} usable earlier weeks for this hour: no reliable normal.",
+    }.get(state)
 
 
 def likely_driver(requests: int, expected: float | None) -> dict:
@@ -113,8 +155,9 @@ def likely_driver(requests: int, expected: float | None) -> dict:
             "requests_vs_expected": None,
             "reason": "no expected request count for this weekday and hour",
         }
-    ratio = round(requests / expected, 2)
-    if ratio >= config.DEMAND_RATIO:
+    raw = requests / expected  # decide on the raw ratio, show it rounded
+    ratio = round(raw, 2)
+    if raw >= config.DEMAND_RATIO:
         return {
             "value": "demand",
             "requests_vs_expected": ratio,
@@ -123,10 +166,31 @@ def likely_driver(requests: int, expected: float | None) -> dict:
     return {
         "value": "unclear",
         "requests_vs_expected": ratio,
-        "reason": f"requests are {ratio}x the expected count, not above {config.DEMAND_RATIO}x; "
+        "reason": f"requests are {raw:.3f}x the expected count, below {config.DEMAND_RATIO}x; "
         "fewer drivers is possible but the data cannot show it (no driver count, "
         "unfulfilled requests are invisible)",
     }
+
+
+def expected_requests(b: dict, minutes: int) -> float | None:
+    """Normal request count for a window of this length (unrounded)."""
+    rph = b["_raw"].get("requests_per_hour")
+    return None if rph is None else float(rph) * minutes / 60
+
+
+def wait_ratio(p50: float, b: dict) -> float:
+    """Live median wait / normal median wait, unrounded."""
+    return p50 / float(b["_raw"]["wait_p50_s"])
+
+
+def above_normal_range(p50: float, b: dict) -> bool:
+    p75 = b["_raw"].get("wait_p75_s")
+    return p75 is not None and p50 > float(p75)
+
+
+def public(d: dict) -> dict:
+    """Drop internal (underscore) fields before a value leaves a tool."""
+    return {k: v for k, v in d.items() if not k.startswith("_")}
 
 
 def window_minutes(window: str) -> int:

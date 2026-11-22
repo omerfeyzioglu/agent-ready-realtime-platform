@@ -33,7 +33,9 @@ def source() -> str:
 
 def read(zone_ids: list[int], provider: str, window: str) -> Values:
     at = frozen_at()
-    return _from_redis(zone_ids, provider, window) if at is None else _from_log(zone_ids, provider, window, at)
+    return (
+        _from_redis(zone_ids, provider, window) if at is None else _from_log(zone_ids, provider, window, at)
+    )
 
 
 def _from_redis(zone_ids: list[int], provider: str, window: str) -> Values:
@@ -41,8 +43,22 @@ def _from_redis(zone_ids: list[int], provider: str, window: str) -> Values:
     for z in zone_ids:
         pipe.hgetall(f"feat:zone_window:{VERSION}:{z}:{provider}:{window}")
         pipe.hgetall(f"feat:zone_open:{VERSION}:{z}:{provider}")
+    pipe.hget(f"feat:live:{VERSION}:heartbeat", "as_of_utc")
     res = pipe.execute()
-    return {z: (res[2 * i], res[2 * i + 1]) for i, z in enumerate(zone_ids)}
+    hb = res[-1]
+    # Flink stops writing a zone once its window is empty, but the last
+    # record stays until its TTL (10 min). The minute log has no row for that
+    # zone, so treat a record older than the heartbeat minute as gone: both
+    # paths then agree that the zone is quiet.
+    oldest = None if hb is None else utc(hb) - timedelta(seconds=60)
+
+    def current(h: dict, field: str) -> dict:
+        return h if h and (oldest is None or utc(h[field]) >= oldest) else {}
+
+    return {
+        z: (current(res[2 * i], "window_end_utc"), current(res[2 * i + 1], "as_of_utc"))
+        for i, z in enumerate(zone_ids)
+    }
 
 
 def _from_log(zone_ids: list[int], provider: str, window: str, at: datetime) -> Values:

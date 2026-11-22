@@ -62,3 +62,11 @@ def iceberg_metadata(database: str, table: str, max_age_s: float = 60) -> str:
     loc = glue.get_table(DatabaseName=database, Name=table)["Table"]["Parameters"]["metadata_location"]
     _meta_cache[key] = (time.monotonic(), loc)
     return loc
+
+
+def is_missing_file(e: Exception) -> bool:
+    """True only for "this file does not exist" (a batch month not built
+    yet): locally DuckDB says "No files found", on S3 it is an HTTP 404.
+    Anything else (403, timeout, expired credentials) is a real error."""
+    msg = str(e)
+    return "No files found" in msg or "404 Not Found" in msg

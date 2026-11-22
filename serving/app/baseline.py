@@ -9,10 +9,15 @@ The batch hourly table (feat_zone_hour) ends where the batch build ends
 (2026-07); weeks after that are simply missing, and the week count says so.
 """
 
+import logging
 import threading
 from datetime import date, datetime, timedelta
 
+import duckdb
+
 from . import config, sources
+
+log = logging.getLogger(__name__)
 
 _loaded: set[str] = set()
 _lock = threading.Lock()
@@ -53,9 +58,34 @@ def _ensure_loaded(day: date) -> None:
                     f"INSERT INTO zone_hour SELECT date_local, hour_of_day_local, zone_id, provider, requests, "
                     f"dropoffs_in, wait_p50_s, is_low_sample FROM read_parquet('{path}')"
                 )
-            except Exception:
-                pass  # month not built by batch (yet): its weeks are simply missing
+            except duckdb.IOException as e:
+                # Only "not built yet" is expected. Anything else (expired
+                # credentials, a timeout) must not mark the month as loaded,
+                # or every zone would quietly read "weak baseline" until a restart.
+                if not sources.is_missing_file(e):
+                    raise
+                log.info("batch month %s not built: its weeks are missing from the normal", m)
             _loaded.add(m)
+
+
+def is_holiday(day: date) -> bool:
+    """True when the day is a holiday (actual or observed). The normal
+    leaves holidays out, so a holiday is compared with ordinary weeks."""
+    _ensure_loaded(day)
+    return bool(
+        sources.duck().execute("SELECT count(*) FROM holidays WHERE holiday_date = ?", [day]).fetchone()[0]
+    )
+
+
+def holiday_caveat(day: date) -> list[str]:
+    if not is_holiday(day):
+        return []
+    return [
+        (
+            f"{day} is a holiday: the normal comes from ordinary weeks of this weekday, so waits and "
+            "requests may look unusual for holiday reasons. Do not treat that as a shortage without saying so."
+        )
+    ]
 
 
 def for_hours(local_hour: datetime, zone_ids: list[int], provider: str) -> dict[int, dict]:
@@ -63,11 +93,10 @@ def for_hours(local_hour: datetime, zone_ids: list[int], provider: str) -> dict[
     day, hod = local_hour.date(), local_hour.hour
     _ensure_loaded(day)
     weeks = [day - timedelta(days=7 * k) for k in range(1, config.BASELINE_WEEKS + 1)]
-    ids = ",".join(str(int(z)) for z in zone_ids) or "NULL"
-    dates = ",".join(f"DATE '{d.isoformat()}'" for d in weeks)
     rows = (
         sources.duck()
-        .sql(f"""
+        .execute(
+            """
         SELECT zone_id,
                count(DISTINCT date_local) AS weeks_n,
                count(CASE WHEN NOT is_low_sample THEN wait_p50_s END) AS wait_weeks_n,
@@ -77,10 +106,12 @@ def for_hours(local_hour: datetime, zone_ids: list[int], provider: str) -> dict[
                median(requests) AS requests_per_hour,
                median(dropoffs_in) AS dropoffs_in_per_hour
         FROM zone_hour
-        WHERE zone_id IN ({ids}) AND provider = '{provider}' AND hour_of_day_local = {hod}
-          AND date_local IN ({dates})
+        WHERE list_contains(?, zone_id) AND provider = ? AND hour_of_day_local = ?
+          AND list_contains(?, date_local)
           AND date_local NOT IN (SELECT holiday_date FROM holidays)
-        GROUP BY zone_id""")
+        GROUP BY zone_id""",
+            [[int(z) for z in zone_ids], provider, hod, weeks],
+        )
         .fetchall()
     )
     out = {}
@@ -94,6 +125,8 @@ def for_hours(local_hour: datetime, zone_ids: list[int], provider: str) -> dict[
             "weeks_n": wn,
             "wait_weeks_n": wwn,
             "is_weak": wwn < config.BASELINE_MIN_WEEKS,
+            # Unrounded, for arithmetic (dbt stores them unrounded); the fields above are for display.
+            "_raw": {"wait_p25_s": p25, "wait_p50_s": p50, "wait_p75_s": p75, "requests_per_hour": req},
             "rule": f"same zone, provider, weekday and NYC hour ({hod}:00) in the previous "
             f"{config.BASELINE_WEEKS} weeks; holidays and low-sample hours left out",
         }
@@ -105,6 +138,7 @@ def for_hours(local_hour: datetime, zone_ids: list[int], provider: str) -> dict[
                 "wait_weeks_n": 0,
                 "is_weak": True,
                 "rule": "no earlier weeks found for this hour",
+                "_raw": {},
             },
         )
     return out

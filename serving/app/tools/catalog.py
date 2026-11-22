@@ -16,7 +16,10 @@ def get_catalog() -> dict[str, Any]:
     return {
         "questions_answerable": [
             "What is 'now' in the replay, and is the live data current? (now)",
-            "Where is there a driver shortage right now, ranked? (find_shortages)",
+            "Where is there a driver shortage right now, ranked? (find_shortages, sort_by=wait_pctile)",
+            "Which zones have open requests waiting longest? (find_shortages, sort_by=oldest_open_request)",
+            "Where are requests most above normal? (find_shortages, sort_by=requests_vs_expected)",
+            "How is the whole city or a borough doing; is it everywhere or a few zones? (get_city_summary)",
             "How is a place or zone doing right now vs its normal, over 15 or 30 minutes? (get_zone_now)",
             "How unusual is a zone's wait vs its own last 8 weeks (percentile)? (get_zone_now, find_shortages)",
             "How did a zone develop minute by minute over the last hours? (get_zone_history)",

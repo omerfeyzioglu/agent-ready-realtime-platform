@@ -10,15 +10,20 @@ from .common import (
     VERSION,
     Provider,
     Window,
+    above_normal_range,
     check,
+    classify,
     clock,
+    expected_requests,
     freshness,
     iso,
     likely_driver,
     local,
     num,
     provider_caveats,
-    utc,
+    public,
+    state_note,
+    wait_ratio,
     window_minutes,
     zone,
 )
@@ -29,80 +34,67 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
     """Live state of one pickup zone at the current moment: median and 90th
     percentile wait (request -> driver arrival) over the last 15 or 30
     minutes, requests, open requests and the oldest open request, next to the
-    normal for this weekday and hour. provider defaults to uber; use 30m
-    unless the question is about the last few minutes."""
+    normal for this weekday and hour. `state` says whether the zone can be
+    compared with normal (same rule as find_shortages). provider defaults to
+    uber; use 30m unless the question is about the last few minutes."""
     check(provider, window)
     z = zone(zone_id)
     c = clock()
     w, o = live.read([zone_id], provider, window)[zone_id]
     minutes = window_minutes(window)
+    as_of = c["features_as_of"]
+    fresh = freshness(as_of, c["now"], config.LIVE_SLA_S, c)
     caveats = provider_caveats(provider)
-
-    if not w:
-        hb_ok = c["features_lag_s"] is not None and c["features_lag_s"] <= config.LIVE_SLA_S
+    if fresh["status"] in ("stale", "unavailable"):
         return {
             "zone": z,
             "provider": provider,
             "window": window,
-            "status": "no_activity" if hb_ok else "stale",
-            "freshness": freshness(c["features_as_of"], c["now"], config.LIVE_SLA_S),
-            "note": (
-                "No trips in this zone in the last 30 minutes."
-                if hb_ok
-                else "The live pipeline is behind; no current value."
-            ),
+            "status": "stale",
+            "freshness": fresh,
+            "note": "The live pipeline is behind; no current value.",
         }
 
-    as_of = utc(w["window_end_utc"])
-    fresh = freshness(as_of, c["now"], config.LIVE_SLA_S)
-    mid = as_of - timedelta(minutes=minutes / 2)
-    b = baseline.for_hours(
-        mid.astimezone(NY).replace(tzinfo=None, minute=0, second=0, microsecond=0),
-        [zone_id],
-        provider,
-    )[zone_id]
-    wait_n = int(w["wait_n"])
-    p50 = num(w.get("wait_p50_s"))
-    expected_requests = (
-        None if b.get("requests_per_hour") is None else round(b["requests_per_hour"] * minutes / 60, 1)
-    )
+    mid = (as_of - timedelta(minutes=minutes / 2)).astimezone(NY)
+    b = baseline.for_hours(mid.replace(tzinfo=None, minute=0, second=0, microsecond=0), [zone_id], provider)[
+        zone_id
+    ]
+    state = classify(w, o, b)
+    requests = int(w["requests"]) if w else 0
+    p50 = num(w.get("wait_p50_s")) if w else None
+    expected = expected_requests(b, minutes)
+    metrics = {
+        "wait_p50_s": {"value": p50, "unit": "seconds"},
+        "wait_p90_s": {"value": num(w.get("wait_p90_s")) if w else None, "unit": "seconds"},
+        "requests": {
+            "value": requests,
+            "unit": "count",
+            "expected_from_baseline": None if expected is None else round(expected, 1),
+        },
+        "open_requests": {"value": int(o.get("open_requests", 0)) if o else 0, "unit": "count"},
+        "open_request_max_age_s": {
+            "value": num(o.get("open_request_max_age_s")) if o else None,
+            "unit": "seconds",
+        },
+    }
 
-    if fresh["status"] != "fresh":
-        metrics = None
-    else:
-        metrics = {
-            "wait_p50_s": {"value": p50, "unit": "seconds"},
-            "wait_p90_s": {"value": num(w.get("wait_p90_s")), "unit": "seconds"},
-            "requests": {
-                "value": int(w["requests"]),
-                "unit": "count",
-                "expected_from_baseline": expected_requests,
-            },
-            "open_requests": {"value": int(o.get("open_requests", 0)), "unit": "count"},
-            "open_request_max_age_s": {
-                "value": num(o.get("open_request_max_age_s")),
-                "unit": "seconds",
-            },
-        }
-
-    comparison = {}
-    if metrics and p50 is not None and b.get("wait_p50_s"):
-        ratio = round(p50 / b["wait_p50_s"], 2)
-        comparison = {
-            "wait_ratio": ratio,
-            "above_normal_range": b.get("wait_p75_s") is not None and p50 > b["wait_p75_s"],
-            "below_normal_range": b.get("wait_p25_s") is not None and p50 < b["wait_p25_s"],
+    # Compared with normal only when the zone is comparable, exactly as in
+    # find_shortages, so the two tools never disagree about a zone.
+    comparison = {"likely_driver": likely_driver(requests, expected)}
+    if state == "scored":
+        raw = wait_ratio(p50, b)
+        comparison |= {
+            "wait_ratio": round(raw, 2),
+            "above_normal_range": above_normal_range(p50, b),
+            "below_normal_range": b["_raw"].get("wait_p25_s") is not None
+            and p50 < float(b["_raw"]["wait_p25_s"]),
             # How unusual for THIS zone: rank against its own last 8 weeks.
-            **scores.pctiles({zone_id: ratio}, provider, c["now"])[zone_id],
-            "likely_driver": likely_driver(int(w["requests"]), expected_requests),
+            **scores.pctiles({zone_id: raw}, provider, c["now"])[zone_id],
         }
-    if wait_n < config.LOW_SAMPLE_WAITS:
-        caveats.append(f"Only {wait_n} waits in this window: too few to rank or alert on.")
-    if b["is_weak"]:
-        caveats.append(f"Weak baseline: only {b['wait_weeks_n']} usable earlier weeks (need 3).")
-    caveats.append(
-        f"Baseline is per hour ({mid.astimezone(NY):%H}:00 local); the live value covers {window}."
-    )
+    if note := state_note(state, window):
+        caveats.append(note)
+    caveats += baseline.holiday_caveat(mid.date())
+    caveats.append(f"Baseline is per hour ({mid:%H}:00 local); the live value covers {window}.")
     caveats.append(
         "wait_ratio_pctile ranks this live window against the zone's hourly ratios of the last 8 "
         "weeks; short windows swing more than hours, so read 95+ as unusual, not as certain."
@@ -113,13 +105,14 @@ def get_zone_now(zone_id: int, provider: Provider = "uber", window: Window = "30
         "zone": z,
         "provider": provider,
         "window": window,
-        "status": "ok" if metrics else "stale",
+        "status": "ok",
+        "state": state,
         "as_of_utc": iso(as_of),
         "as_of_local": local(as_of),
         "freshness": fresh,
         "metrics": metrics,
-        "sample_size": {"wait_n": wait_n},
-        "baseline": b,
+        "sample_size": {"wait_n": int(w["wait_n"]) if w else 0},
+        "baseline": public(b),
         "comparison": comparison,
         "caveats": caveats,
         "definition_version": VERSION,
@@ -150,14 +143,15 @@ def get_zone_history(
     s = window  # validated above, safe to use in a column name
     rows = (
         sources.duck()
-        .sql(f"""
+        .execute(
+            f"""
         SELECT as_of_utc, requests_{s}, wait_n_{s}, wait_p50_s_{s}, wait_p90_s_{s},
                open_requests, open_request_max_age_s
         FROM iceberg_scan('{meta}')
-        WHERE zone_id = {int(zone_id)} AND provider = '{provider}'
-          AND as_of_utc > TIMESTAMPTZ '{iso(since)}'
-          AND as_of_utc <= TIMESTAMPTZ '{iso(now_)}'
-        ORDER BY as_of_utc""")
+        WHERE zone_id = ? AND provider = ? AND as_of_utc > ? AND as_of_utc <= ?
+        ORDER BY as_of_utc""",  # only the column suffix (validated window) and the metadata path are formatted
+            [int(zone_id), provider, since, now_],
+        )
         .fetchall()
     )
     # Each point is a rolling window ending at that minute, so the counts

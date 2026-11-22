@@ -5,7 +5,7 @@ audited (see ../audit.py). One module per kind of question."""
 from .catalog import describe_metric, get_catalog
 from .clock import now
 from .places import resolve_place
-from .shortages import find_shortages
+from .shortages import find_shortages, get_city_summary
 from .zones import get_zone_history, get_zone_now
 
 TOOLS = [
@@ -13,6 +13,7 @@ TOOLS = [
     get_catalog,
     resolve_place,
     find_shortages,
+    get_city_summary,
     get_zone_now,
     get_zone_history,
     describe_metric,

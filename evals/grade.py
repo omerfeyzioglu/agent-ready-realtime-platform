@@ -70,7 +70,9 @@ def deterministic(q: dict, result: dict) -> dict:
         "numbers_in_answers": sum(f["numbers_n"] for f in per_turn),
         "output_tokens": sum(t["output_tokens"] or 0 for t in turns),
         "input_tokens_incl_cache": sum(
-            (t["input_tokens"] or 0) + (t["cache_read_tokens"] or 0) + (t["cache_write_tokens"] or 0)
+            (t["input_tokens"] or 0)
+            + (t["cache_read_tokens"] or 0)
+            + (t["cache_write_tokens"] or 0)
             for t in turns
         ),
         "tool_calls_n": len(calls),
@@ -79,21 +81,46 @@ def deterministic(q: dict, result: dict) -> dict:
     }
 
 
-def key_for(moment: dict) -> str:
-    """The parts of the answer key a judge needs, compact."""
-    cols = ("zone_id", "zone_name", "borough", "state", "wait_p50_s", "normal_p50_s", "normal_p25_s",
-            "normal_p75_s", "wait_ratio", "wait_ratio_pctile", "wait_n", "requests", "expected_requests_30m",
-            "open_requests", "open_request_max_age_s")
-    uber = "\n".join("|".join(str(z.get(c)) for c in cols) for z in moment["zones"]["uber"])
-    return json.dumps(
-        {
-            "moment": moment["local"],
-            "summary": moment["summary"],
-            "places": moment["places"],
-            "history_uber_every_15_min": moment["history_uber"],
-        },
-        default=str,
-    ) + "\n\nUber zone table (" + "|".join(cols) + "):\n" + uber
+def key_for(moment: dict, lyft: bool = False) -> str:
+    """The parts of the answer key a judge needs, compact; Lyft rows only
+    when the question is about Lyft."""
+    cols = (
+        "zone_id",
+        "zone_name",
+        "borough",
+        "state",
+        "wait_p50_s",
+        "normal_p50_s",
+        "normal_p25_s",
+        "normal_p75_s",
+        "wait_ratio",
+        "wait_ratio_pctile",
+        "wait_n",
+        "requests",
+        "expected_requests_30m",
+        "open_requests",
+        "open_request_max_age_s",
+    )
+    providers = ("uber", "lyft") if lyft else ("uber",)
+    tables = "".join(
+        f"\n\n{p.capitalize()} zone table ("
+        + "|".join(cols)
+        + "):\n"
+        + "\n".join("|".join(str(z.get(c)) for c in cols) for z in moment["zones"][p])
+        for p in providers
+    )
+    return (
+        json.dumps(
+            {
+                "moment": moment["local"],
+                "summary": moment["summary"],
+                "places": moment["places"],
+                "history_uber_every_15_min": moment["history_uber"],
+            },
+            default=str,
+        )
+        + tables
+    )
 
 
 JUDGE = """You grade an operations agent's answer against an answer key. Be strict and literal.
@@ -134,7 +161,9 @@ def judge(q: dict, result: dict, key: dict, det: dict, model: str) -> dict:
     for i, t in enumerate(result["turns"], 1):
         transcript.append(f"--- turn {i}: {t['question']}")
         for c in t["tool_calls"]:
-            transcript.append(f"[tool {c.get('tool')} {json.dumps(c.get('input'))}]\n{c.get('output')}")
+            transcript.append(
+                f"[tool {c.get('tool')} {json.dumps(c.get('input'))}]\n{c.get('output')}"
+            )
         transcript.append(f"[answer]\n{t['answer']}")
     prompt = JUDGE.format(
         moment=key["local"],
@@ -144,7 +173,7 @@ def judge(q: dict, result: dict, key: dict, det: dict, model: str) -> dict:
         turns="\n".join(f"- {t}" for t in q["turns"]),
         checks="\n".join(f"- {c}" for c in q["checks"]),
         note=f"\nNOTE FROM THE AUTHOR: {q['note']}\n" if q.get("note") else "",
-        key=key_for(key),
+        key=key_for(key, lyft=any("lyft" in t.lower() for t in q["turns"])),
         transcript="\n".join(transcript),
         unsupported=det["unsupported_numbers"],
     )
@@ -155,7 +184,11 @@ def judge(q: dict, result: dict, key: dict, det: dict, model: str) -> dict:
     )  # fmt: skip
     text = json.loads(out.stdout)["result"]
     m = re.search(r"\{.*\}", text, re.S)
-    return json.loads(m.group(0)) if m else {"verdict": "judge_error", "summary": text[:300]}
+    return (
+        json.loads(m.group(0))
+        if m
+        else {"verdict": "judge_error", "summary": text[:300]}
+    )
 
 
 def main() -> None:
@@ -163,19 +196,31 @@ def main() -> None:
     ap.add_argument("run_dir")
     ap.add_argument("--no-judge", action="store_true")
     ap.add_argument("--judge-model", default="opus")
-    ap.add_argument("--rejudge", action="store_true", help="ask the judge again even if grades.json has verdicts")
+    ap.add_argument(
+        "--rejudge",
+        action="store_true",
+        help="ask the judge again even if grades.json has verdicts",
+    )
     a = ap.parse_args()
 
     run = Path(a.run_dir)
     data = json.loads((run / "results.json").read_text())
-    spec = {q["id"]: q for q in yaml.safe_load((ROOT / "evals/questions.yaml").read_text())["questions"]}
+    spec = {
+        q["id"]: q
+        for q in yaml.safe_load((ROOT / "evals/questions.yaml").read_text())[
+            "questions"
+        ]
+    }
     key = json.loads((ROOT / "evals/key/answer_key.json").read_text())["moments"]
 
     # Judge verdicts are kept between gradings: asking again can change them.
     previous = {}
     if (run / "grades.json").exists() and not a.rejudge:
-        previous = {g["id"]: g["judge"] for g in json.loads((run / "grades.json").read_text())["grades"]
-                    if "judge" in g}
+        previous = {
+            g["id"]: g["judge"]
+            for g in json.loads((run / "grades.json").read_text())["grades"]
+            if "judge" in g
+        }
     grades = []
     for r in data["results"]:
         q = spec[r["id"]]
@@ -186,22 +231,35 @@ def main() -> None:
         elif not a.no_judge:
             g["judge"] = judge(q, r, key[r["moment"]], det, a.judge_model)
         grades.append(g)
-        print(f"{g['id']}: {g.get('judge', {}).get('verdict', '-'):16} unsupported {det['unsupported_numbers']}",
-              file=sys.stderr)
+        print(
+            f"{g['id']}: {g.get('judge', {}).get('verdict', '-'):16} unsupported {det['unsupported_numbers']}",
+            file=sys.stderr,
+        )
 
-    (run / "grades.json").write_text(json.dumps({"meta": data["meta"], "judge_model": a.judge_model,
-                                                  "grades": grades}, indent=1))
-    lines = ["| id | expect | verdict | tools | unsupported numbers | out tokens | s |", "|---|---|---|---|---|---|---|"]
+    (run / "grades.json").write_text(
+        json.dumps(
+            {"meta": data["meta"], "judge_model": a.judge_model, "grades": grades},
+            indent=1,
+        )
+    )
+    lines = [
+        "| id | expect | verdict | tools | unsupported numbers | out tokens | s |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for g in grades:
-        lines.append(f"| {g['id']} | {g['expect']}{' (bait)' if g['bait'] else ''} | "
-                     f"{g.get('judge', {}).get('verdict', '-')} | {g['tool_calls_n']} | "
-                     f"{', '.join(str(n) for n in g['unsupported_numbers']) or '-'} | {g['output_tokens']} | {g['wall_s']} |")
+        lines.append(
+            f"| {g['id']} | {g['expect']}{' (bait)' if g['bait'] else ''} | "
+            f"{g.get('judge', {}).get('verdict', '-')} | {g['tool_calls_n']} | "
+            f"{', '.join(str(n) for n in g['unsupported_numbers']) or '-'} | {g['output_tokens']} | {g['wall_s']} |"
+        )
     lines.append("")
     for g in grades:
         if "judge" in g:
             lines.append(f"**{g['id']}**: {g['judge'].get('summary', '')}")
             for c in g["judge"].get("checks", []):
-                lines.append(f"- {'PASS' if c.get('pass') else 'FAIL'}: {c.get('check')}: {c.get('reason')}")
+                lines.append(
+                    f"- {'PASS' if c.get('pass') else 'FAIL'}: {c.get('check')}: {c.get('reason')}"
+                )
             lines.append("")
     (run / "grades.md").write_text("\n".join(lines))
     print(f"wrote {run / 'grades.md'}")
